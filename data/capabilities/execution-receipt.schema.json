@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://darktable.org/schemas/execution-receipt/v1",
+  "title": "darktable execution receipt",
+  "type": "object",
+  "required": ["schema_version", "receipt_id", "plan_id", "idempotency_key", "status", "started_at", "finished_at", "changes", "warnings", "output_files", "undo"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "receipt_id": { "type": "string", "format": "uuid" },
+    "plan_id": { "type": "string", "format": "uuid" },
+    "idempotency_key": { "type": "string" },
+    "status": { "enum": ["committed", "rolled_back", "cancelled", "failed"] },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" },
+    "changes": { "type": "array", "items": { "type": "object" } },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "output_files": { "type": "array", "items": { "type": "object", "required": ["path", "verified"], "properties": { "path": { "type": "string" }, "verified": { "type": "boolean" } }, "additionalProperties": false } },
+    "undo": { "type": "array", "items": { "type": "object", "required": ["capability_id", "token"], "properties": { "capability_id": { "const": "history.undo" }, "token": { "type": "string" } }, "additionalProperties": false } },
+    "error": { "$ref": "error.schema.json" }
+  },
+  "additionalProperties": false
+}
