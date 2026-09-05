@@ -6,10 +6,11 @@ add_definitions(-include common/module_api.h)
 add_definitions(-include libs/lib_api.h)
 
 # The modules
-set(MODULES import export copy_history styles tagging image select collect recentcollect filtering metadata metadata_view navigation histogram history snapshots modulegroups backgroundjobs colorpicker masks session duplicate ioporder)
+set(MODULES import export copy_history styles tagging image select collect recentcollect filtering metadata metadata_view navigation histogram history snapshots modulegroups backgroundjobs colorpicker masks session duplicate ioporder essentials_inspector essentials_library)
 
 # The tools
 set(MODULES ${MODULES} viewswitcher)
+set(MODULES ${MODULES} essentials_header)
 set(MODULES ${MODULES} darktable_label)
 set(MODULES ${MODULES} ratings)
 set(MODULES ${MODULES} colorlabels)
@@ -48,9 +49,12 @@ add_library(masks MODULE "masks.c")
 add_library(session MODULE "session.c")
 add_library(duplicate MODULE "duplicate.c")
 add_library(ioporder MODULE "ioporder.c")
+add_library(essentials_inspector MODULE "essentials_inspector.c")
+add_library(essentials_library MODULE "essentials_library.c")
 
 # tools
 add_library(viewswitcher MODULE "tools/viewswitcher.c")
+add_library(essentials_header MODULE "tools/essentials_header.c")
 
 add_library(darktable_label MODULE "tools/darktable.c")
 
