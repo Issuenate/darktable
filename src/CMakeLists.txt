@@ -25,6 +25,7 @@ FILE(GLOB SOURCE_FILES
   "common/bilinear.c"
   "common/box_filters.cc"
   "common/cache.c"
+  "common/capabilities.c"
   "common/calculator.c"
   "common/collection.c"
   "common/color_harmony.c"
