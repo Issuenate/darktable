@@ -22,6 +22,14 @@ find_package(Python3 QUIET COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
   add_test(NAME test_essentials_capability_registration
            COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/check_capability_registry.py)
+  if(USE_MCP)
+    # the schemas in data/capabilities are published as the wire contract, so a
+    # response that does not satisfy one is a bug in the emitter or the schema
+    add_test(NAME test_mcp_capability_contract
+             COMMAND ${Python3_EXECUTABLE}
+                     ${PROJECT_SOURCE_DIR}/tools/check_mcp_capability_contract.py
+                     $<TARGET_FILE:darktable-mcp>)
+  endif()
 endif()
 
 # HDR exposure-bracket auto-alignment. Calls the public dt_hdr_alignment_* API

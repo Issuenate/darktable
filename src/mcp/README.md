@@ -114,6 +114,19 @@ Standard MCP handshake over stdio, both newline-delimited JSON (default) and
 
 ## Tools
 
+### User-goal capabilities
+
+| Tool | Input | Output |
+|------|-------|--------|
+| `capabilities_search` | `{query?, context?, limit?}` | `{score, capability}` entries, ranked; the capability object is exactly the `capability.schema.json` type |
+| `capabilities_describe` | `{id}` | one complete capability descriptor |
+
+These tools are deterministic and read-only. They are the compatibility bridge
+from raw developer-oriented module tools toward goal-oriented plans. A result
+with `agent_exposure: "previewable"` is discoverable, but it is not executable
+until the shared plan executor has validated, previewed, confirmed, committed,
+and verified it.
+
 ### Introspection
 
 | Tool | Input | Output |
