@@ -25,9 +25,11 @@
 #include "common/debug.h"
 #include "common/history.h"
 #include "common/image_cache.h"
+#include "common/capabilities.h"
 #include "common/ratings.h"
 #include "common/selection.h"
 #include "common/undo.h"
+#include "control/conf.h"
 #include "control/control.h"
 #include "gui/accelerators.h"
 #include "gui/drag_and_drop.h"
@@ -1370,6 +1372,43 @@ static void _line_to_module(cairo_t *cr,
            allocation.y + allocation.height / 2);
 }
 
+static void _lighttable_expose_essentials_empty(cairo_t *cr,
+                                                const int32_t width,
+                                                const int32_t height)
+{
+  cairo_set_source_rgb(cr, 0.055, 0.063, 0.071);
+  cairo_rectangle(cr, 0, 0, width, height);
+  cairo_fill(cr);
+
+  PangoLayout *layout = pango_cairo_create_layout(cr);
+  PangoFontDescription *desc = dt_gui_get_font();
+  pango_font_description_set_absolute_size(desc, DT_PIXEL_APPLY_DPI(22.0f) * PANGO_SCALE);
+  pango_font_description_set_weight(desc, PANGO_WEIGHT_SEMIBOLD);
+  pango_layout_set_font_description(layout, desc);
+  pango_layout_set_alignment(layout, PANGO_ALIGN_CENTER);
+  pango_layout_set_text(layout, _("your library is empty"), -1);
+
+  PangoRectangle title;
+  pango_layout_get_pixel_extents(layout, NULL, &title);
+  cairo_set_source_rgb(cr, 0.91, 0.93, 0.95);
+  cairo_move_to(cr, (width - title.width) * 0.5, height * 0.43);
+  pango_cairo_show_layout(cr, layout);
+
+  pango_font_description_set_absolute_size(desc, DT_PIXEL_APPLY_DPI(14.0f) * PANGO_SCALE);
+  pango_font_description_set_weight(desc, PANGO_WEIGHT_NORMAL);
+  pango_layout_set_font_description(layout, desc);
+  pango_layout_set_text(layout, _("choose add photos above to get started"), -1);
+  PangoRectangle subtitle;
+  pango_layout_get_pixel_extents(layout, NULL, &subtitle);
+  cairo_set_source_rgb(cr, 0.58, 0.62, 0.66);
+  cairo_move_to(cr, (width - subtitle.width) * 0.5,
+                height * 0.43 + title.height + DT_PIXEL_APPLY_DPI(12));
+  pango_cairo_show_layout(cr, layout);
+
+  pango_font_description_free(desc);
+  g_object_unref(layout);
+}
+
 
 // display help text in the center view if there's no image to show
 static void _lighttable_expose_empty(cairo_t *cr,
@@ -1484,8 +1523,11 @@ static gboolean _event_draw(GtkWidget *widget,
   {
     GtkAllocation allocation;
     gtk_widget_get_allocation(table->widget, &allocation);
-    _lighttable_expose_empty(cr, allocation.width, allocation.height,
-                             table->mode != DT_THUMBTABLE_MODE_FILMSTRIP ? table : NULL);
+    if(dt_essentials_mode_is_active() && table->mode != DT_THUMBTABLE_MODE_FILMSTRIP)
+      _lighttable_expose_essentials_empty(cr, allocation.width, allocation.height);
+    else
+      _lighttable_expose_empty(cr, allocation.width, allocation.height,
+                               table->mode != DT_THUMBTABLE_MODE_FILMSTRIP ? table : NULL);
     return TRUE;
   }
   else

@@ -17,6 +17,7 @@
 */
 #include "common/gdk_event_utils.h"
 
+#include "common/capabilities.h"
 #include "common/darktable.h"
 #ifdef HAVE_GPHOTO2
 #include "common/camera_control.h"
@@ -494,10 +495,17 @@ static void _borders_button_pressed(GtkGestureSingle *gesture,
 
 // FIXME: if this is only called from scroll handlers, move this logic to scroll proxy
 // FIXME: just call with GdkModifierType as state
+/* Essentials scrolls the side panel under the pointer without a modifier;
+ * Advanced keeps whatever the user set. */
+static gboolean _sidebar_scrolls_by_default(void)
+{
+  return dt_essentials_mode_is_active()
+         || dt_conf_get_bool("darkroom/ui/sidebar_scroll_default");
+}
+
 static gboolean _dt_gui_ignore_scroll(const GdkModifierType mods_pressed)
 {
-  const gboolean ignore_without_mods =
-    dt_conf_get_bool("darkroom/ui/sidebar_scroll_default");
+  const gboolean ignore_without_mods = _sidebar_scrolls_by_default();
 
   if(mods_pressed == 0)
     return ignore_without_mods;
@@ -3054,7 +3062,7 @@ static gboolean _ui_init_panel_container_center_scroll_event(GtkWidget *widget,
   // just make sure nothing happens unless ctrl-alt are pressed:
   return (((dt_gdk_event_get_state(event) & gtk_accelerator_get_default_mod_mask())
            != darktable.gui->sidebar_scroll_mask)
-          != dt_conf_get_bool("darkroom/ui/sidebar_scroll_default"));
+          != _sidebar_scrolls_by_default());
   // GTK4: return GDK_EVENT_PROPAGATE/GDK_EVENT_STOP
 }
 
@@ -3189,7 +3197,7 @@ static gboolean _panel_center_scroll(GtkEventControllerScroll *controller,
     dt_gui_get_current_event_state(GTK_EVENT_CONTROLLER(controller))
     & gtk_accelerator_get_default_mod_mask();
   return ((mods != darktable.gui->sidebar_scroll_mask)
-          != dt_conf_get_bool("darkroom/ui/sidebar_scroll_default"))
+          != _sidebar_scrolls_by_default())
     ? GDK_EVENT_STOP : GDK_EVENT_PROPAGATE;
 }
 
@@ -3207,7 +3215,7 @@ static gboolean _borders_scrolled_controller(GtkEventControllerScroll *controlle
     dt_gui_get_current_event_state(GTK_EVENT_CONTROLLER(controller))
     & gtk_accelerator_get_default_mod_mask();
   if(((mods != darktable.gui->sidebar_scroll_mask)
-      != dt_conf_get_bool("darkroom/ui/sidebar_scroll_default")))
+      != _sidebar_scrolls_by_default()))
     return GDK_EVENT_STOP;   // gated away, same as the GTK3 consume
 
   GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(sw));
