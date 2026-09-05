@@ -68,6 +68,20 @@ changes (where available).
   renders run on a throwaway duplicate so the source image is never
   modified.
 
+- A guided "essentials" interface for people new to raw processing.
+  It presents darktable as three steps - add photos, choose, edit &
+  export - with a short left-hand list of destinations, a contextual
+  panel for rating, color labels and albums, and an editor built from
+  plain-language sections such as light, color and detail. A "find
+  anything" box searches everything the interface can do by everyday
+  phrase, for example "make brighter" or "fix the horizon". The
+  controls are darktable's own, so history, undo, sidecars and
+  rendered output are identical to the complete interface, and the
+  Advanced switch in the header returns to it with the saved module
+  layout untouched. New installations start in essentials; existing
+  ones are unaffected. The mode is also under preferences >
+  miscellaneous > interface.
+
 ## UI/UX Improvements
 
 - Checkboxes are now Bauhaus widgets and are reset to default values
