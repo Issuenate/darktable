@@ -15,6 +15,7 @@
 #include "control/conf.h"
 #include "control/control.h"
 #include "gui/accelerators.h"
+#include "gui/essentials_export.h"
 #include "gui/gtk.h"
 #include "libs/lib.h"
 #include "libs/lib_api.h"
@@ -30,8 +31,6 @@ typedef struct dt_lib_essentials_header_t
   GtkWidget *search;
   GtkWidget *popover;
   GtkWidget *results;
-  GtkWidget *advanced;
-  gboolean updating;
   gboolean saved_left_panel;
   gboolean advanced_left_panel_visible;
   gboolean saved_center_panels;
@@ -40,6 +39,7 @@ typedef struct dt_lib_essentials_header_t
   gboolean advanced_bottom_panel_visible;
   guint pending_apply;
   gulong mapped_handler;
+  guint pending_export;
 } dt_lib_essentials_header_t;
 
 static gboolean _essentials_lighttable_module(const char *name)
@@ -158,8 +158,10 @@ static void _apply_module_visibility(const gboolean essentials,
     dt_lib_module_t *module = item->data;
     gboolean visible = dt_lib_is_visible_in_view(
         module, dt_view_manager_get_current_view(darktable.view_manager));
+    /* the guided header is part of the guided interface: leaving it on top of
+     * the complete one gave two overlapping sets of controls */
     if(!g_strcmp0(module->plugin_name, "essentials_header"))
-      visible = TRUE;
+      visible = essentials;
     else if(essentials && library)
       visible = _essentials_lighttable_module(module->plugin_name);
     else if(essentials && edit)
@@ -181,9 +183,6 @@ static gboolean _apply_experience(gpointer user_data)
   const dt_view_type_flags_t current_view = dt_view_get_current();
   const gboolean library = current_view == DT_VIEW_LIGHTTABLE;
   const gboolean edit = current_view == DT_VIEW_DARKROOM;
-  d->updating = TRUE;
-  gtk_switch_set_active(GTK_SWITCH(d->advanced), !essentials);
-  d->updating = FALSE;
   gtk_widget_set_visible(d->guided, essentials);
   GtkWidget *main_window = dt_ui_main_window(darktable.gui->ui);
   if(essentials)
@@ -218,6 +217,42 @@ static void _show_library_tool(const char *name)
     dt_lib_gui_set_expanded(module, TRUE);
 }
 
+static gboolean _open_export_panel(gpointer user_data)
+{
+  dt_lib_essentials_header_t *d = user_data;
+  d->pending_export = 0;
+  if(!darktable.lib || !darktable.view_manager
+     || dt_view_get_current() != DT_VIEW_LIGHTTABLE)
+    return G_SOURCE_REMOVE;
+
+  /* Ask the four questions that matter and hand the rest to the same
+   * dt_control_export() the full module uses. Export used to switch the whole
+   * interface to Advanced to borrow that module, which dropped the user out of
+   * Essentials to finish the one step the guided workflow is named after. */
+  if(dt_essentials_export_dialog() == DT_ESSENTIALS_EXPORT_WANTS_FULL_MODULE)
+  {
+    /* reveal the real export module in place. Essentials stays on: this is the
+     * same borrow-the-module trick the editor's tool rows use, not a trip into
+     * the complete interface. The next view change tidies it away again. */
+    dt_lib_module_t *export_module = dt_lib_get_module("export");
+    if(export_module)
+    {
+      _set_module_widget_visible(export_module, TRUE);
+      _show_library_tool("export");
+      dt_toast_log(_("all export settings"));
+    }
+    else
+      dt_toast_log(_("the export module is unavailable"));
+  }
+  return G_SOURCE_REMOVE;
+}
+
+static void _queue_open_export(dt_lib_essentials_header_t *d)
+{
+  if(!d->pending_export)
+    d->pending_export = g_idle_add(_open_export_panel, d);
+}
+
 static void _activate_capability(dt_lib_essentials_header_t *d,
                                  const char *id)
 {
@@ -247,30 +282,15 @@ static void _activate_capability(dt_lib_essentials_header_t *d,
   }
   else if(!g_strcmp0(id, "export.open"))
   {
-    const gboolean library = dt_view_get_current() == DT_VIEW_LIGHTTABLE;
-    if(library)
-    {
-      d->updating = TRUE;
-      gtk_switch_set_active(GTK_SWITCH(d->advanced), TRUE);
-      d->updating = FALSE;
-      dt_conf_set_string("ui/experience_mode", "advanced");
-      _apply_experience(d);
-    }
-    else
-    {
-      dt_conf_set_bool("plugins/darkroom/export/visible", TRUE);
-      dt_lib_module_t *export_module = dt_lib_get_module("export");
-      if(export_module)
-        _set_module_widget_visible(export_module, TRUE);
-    }
-    _show_library_tool("export");
-    if(library)
-      dt_toast_log(
-          _("advanced export opened while essentials export is being built"));
+    if(dt_view_get_current() != DT_VIEW_LIGHTTABLE)
+      dt_ctl_switch_mode_to("lighttable");
+    _queue_open_export(d);
   }
   else if(!g_strcmp0(id, "ui.advanced"))
   {
-    gtk_switch_set_active(GTK_SWITCH(d->advanced), TRUE);
+    /* the complete interface is a preference now, not a control in the way */
+    dt_toast_log(_("turn on the complete interface in "
+                   "preferences > miscellaneous > interface"));
   }
   else if(g_str_has_prefix(id, "library."))
   {
@@ -389,18 +409,6 @@ static void _refresh_editor_experience(void)
     modulegroups->view_enter(modulegroups, view, view);
 }
 
-static void _advanced_toggled(GtkSwitch *button, GParamSpec *spec,
-                              dt_lib_essentials_header_t *d)
-{
-  (void)spec;
-  if(d->updating)
-    return;
-  dt_conf_set_string("ui/experience_mode",
-                     gtk_switch_get_active(button) ? "advanced" : "essentials");
-  _refresh_editor_experience();
-  _apply_experience(d);
-}
-
 static void _queue_apply(dt_lib_essentials_header_t *d)
 {
   if(!d->pending_apply)
@@ -494,24 +502,14 @@ void gui_init(dt_lib_module_t *self)
   gtk_widget_set_size_request(d->results, DT_PIXEL_APPLY_DPI(380), -1);
   gtk_container_add(GTK_CONTAINER(d->popover), d->results);
 
-  GtkWidget *advanced_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-  GtkWidget *advanced_label = gtk_label_new(_("advanced"));
-  d->advanced = gtk_switch_new();
-  gtk_widget_set_tooltip_text(d->advanced,
-                              _("show the complete darktable interface"));
-  atk_object_set_name(gtk_widget_get_accessible(d->advanced),
-                      _("advanced mode"));
-  g_signal_connect(d->advanced, "notify::active", G_CALLBACK(_advanced_toggled),
-                   d);
-  gtk_box_pack_start(GTK_BOX(advanced_box), advanced_label, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(advanced_box), d->advanced, FALSE, FALSE, 0);
-
   GtkWidget *export_button = gtk_button_new_with_label(_("export"));
   gtk_widget_set_name(export_button, "essentials-header-export");
   gtk_widget_set_tooltip_text(export_button, _("export selected photos"));
   atk_object_set_name(gtk_widget_get_accessible(export_button),
                       _("export selected photos"));
   g_signal_connect(export_button, "clicked", G_CALLBACK(_export_clicked), d);
+  dt_action_define(DT_ACTION(self), NULL, N_("export"), export_button,
+                   &dt_action_def_button);
 
   gtk_widget_set_halign(d->guided, GTK_ALIGN_CENTER);
   gtk_box_pack_start(GTK_BOX(self->widget), d->guided, FALSE, FALSE, 0);
@@ -519,7 +517,6 @@ void gui_init(dt_lib_module_t *self)
   GtkWidget *search_line = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
   gtk_box_pack_start(GTK_BOX(search_line), d->search, TRUE, TRUE, 0);
   GtkWidget *header_actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-  gtk_box_pack_start(GTK_BOX(header_actions), advanced_box, FALSE, FALSE, 0);
   gtk_box_pack_start(GTK_BOX(header_actions), export_button, FALSE, FALSE, 0);
   gtk_box_pack_end(GTK_BOX(search_line), header_actions, FALSE, FALSE, 0);
   gtk_box_pack_start(GTK_BOX(self->widget), search_line, FALSE, FALSE, 0);
@@ -547,6 +544,8 @@ void gui_cleanup(dt_lib_module_t *self)
   dt_lib_essentials_header_t *d = self->data;
   if(d->pending_apply)
     g_source_remove(d->pending_apply);
+  if(d->pending_export)
+    g_source_remove(d->pending_export);
   GtkWidget *main_window = dt_ui_main_window(darktable.gui->ui);
   if(d->mapped_handler && main_window)
     g_signal_handler_disconnect(main_window, d->mapped_handler);
