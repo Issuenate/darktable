@@ -178,7 +178,8 @@ Why that? Just because it's a developer choice and most classes use underscore i
 /* The Essentials surround, picked by ui/essentials_surround. Every one is
  * strictly achromatic (R=G=B): the darkness is a matter of taste, but a tint
  * here would bias how the image's own colors read, which is the reason
- * darkroom_bg_color is neutral in the first place. L* values are 14, 20, 26. */
+ * darkroom_bg_color is neutral in the first place. The names match the
+ * preference; L* values are 14, 20 and 26. */
 @define-color essentials_surround_charcoal #232323;
 @define-color essentials_surround_graphite #303030;
 @define-color essentials_surround_slate    #3d3d3d;
@@ -1424,6 +1425,563 @@ filechooser row:hover .sidebar-icon
 
 /* Essentials presents the quick-access widgets as one calm editing inspector.
  * The widgets themselves still belong to their original processing modules. */
+/* Essentials owns the whole shell, not just its own widgets. Everything below
+ * covers a darktable surface that would otherwise stay the stock grey next to
+ * the graphite panels. All of it is scoped under .essentials-ui, so Advanced is
+ * untouched. */
+.essentials-ui #top-hinter,
+.essentials-ui #top-hinter box
+{
+  background-color: #1b1e21;
+  border-bottom: 1px solid #34383d;
+}
+
+.essentials-ui #outer-border
+{
+  background-color: #1b1e21;
+  border: none;
+}
+
+.essentials-ui #panel-handle-left,
+.essentials-ui #panel-handle-right,
+.essentials-ui #panel-handle-bottom
+{
+  background-color: #1b1e21;
+}
+
+.essentials-ui #panel-handle-left:hover,
+.essentials-ui #panel-handle-right:hover,
+.essentials-ui #panel-handle-bottom:hover
+{
+  background-color: #292f35;
+}
+
+.essentials-ui #plugins_vbox_left,
+.essentials-ui #collapse-block,
+.essentials-ui .collapsible
+{
+  background-color: #1c2024;
+}
+
+/* the side panels scroll, and a stock scrollbar reads as a seam */
+.essentials-panel scrollbar,
+.essentials-panel scrollbar trough
+{
+  background-color: transparent;
+  border: none;
+}
+
+.essentials-panel scrollbar slider
+{
+  border: none;
+  border-radius: 4px;
+  background-color: #34383d;
+}
+
+.essentials-panel scrollbar slider:hover
+{
+  background-color: #4a5057;
+}
+
+/* a tool opens a real processing module inside the Essentials panel, so its
+ * own chrome has to join the same system rather than sit on grey */
+.essentials-ui #right.essentials-panel .dt_plugin_ui,
+.essentials-ui #right.essentials-panel .dt_plugin_ui_main
+{
+  background-color: #1b1e21;
+}
+
+.essentials-ui #right.essentials-panel #module-header
+{
+  min-height: 40px;
+  padding: 0 14px;
+  color: #f1f3f5;
+  background-color: #1b1e21;
+  border-bottom: 1px solid #34383d;
+}
+
+.essentials-ui #right.essentials-panel #module-header label
+{
+  font-size: 1.05em;
+  font-weight: 600;
+}
+
+.essentials-ui #right.essentials-panel .dt_section_expander,
+.essentials-ui #right.essentials-panel .dt_section_label
+{
+  color: #c5ccd3;
+  background-color: transparent;
+  border: none;
+}
+
+.essentials-ui #right.essentials-panel notebook,
+.essentials-ui #right.essentials-panel notebook header,
+.essentials-ui #right.essentials-panel notebook stack
+{
+  background-color: #1b1e21;
+  border-color: #34383d;
+}
+
+.essentials-ui #right.essentials-panel notebook tab
+{
+  color: #9299a1;
+  background-color: transparent;
+}
+
+.essentials-ui #right.essentials-panel notebook tab:checked
+{
+  color: #f1f3f5;
+  box-shadow: inset 0 -2px #5294e2;
+}
+
+/* the ground directly behind a photo stays achromatic, like the darkroom
+ * surround: the graphite used on the panels is slightly blue, and a tint here
+ * would bias how the image's colors read */
+.essentials-ui #thumb-back
+{
+  background-color: #1f1f1f;
+}
+
+.essentials-ui .dt_plugin_ui .dt_transparent_background
+{
+  background-color: transparent;
+}
+
+/* Buttons and fields inside Essentials still resolved to the stock grey ramp:
+ * #3b3b3b at rest and a #777777 wash on hover, which is the grey that shows
+ * through when anything is clicked. The states below are deliberately distinct
+ * from each other -- rest, hover, pressed, keyboard focus -- so a click is
+ * visibly acknowledged rather than just flashing grey. */
+.essentials-ui button,
+.essentials-ui #right.essentials-panel button,
+.essentials-ui #left.essentials-panel button
+{
+  color: #d8dce0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background-color: #232930;
+  background-image: none;
+  box-shadow: none;
+  transition: background-color 90ms ease-out, border-color 90ms ease-out;
+}
+
+.essentials-ui button:hover,
+.essentials-ui #right.essentials-panel button:hover,
+.essentials-ui #left.essentials-panel button:hover
+{
+  color: #ffffff;
+  background-color: #2d353d;
+}
+
+/* pressed must not look like hover, or a click reads as nothing happening */
+.essentials-ui button:active,
+.essentials-ui button:checked,
+.essentials-ui #right.essentials-panel button:active,
+.essentials-ui #left.essentials-panel button:active
+{
+  color: #ffffff;
+  border-color: #5294e2;
+  background-color: #38424c;
+}
+
+.essentials-ui button:disabled
+{
+  color: #6c737a;
+  background-color: #1f242a;
+}
+
+/* keyboard focus has to be visible on its own, not only under the pointer */
+.essentials-ui button:focus,
+.essentials-ui entry:focus,
+.essentials-ui #essentials-search:focus
+{
+  border-color: #5294e2;
+  box-shadow: inset 0 0 0 1px #5294e2;
+}
+
+.essentials-ui entry,
+.essentials-ui #essentials-search
+{
+  color: #eef1f4;
+  border: 1px solid #34383d;
+  border-radius: 6px;
+  background-color: #171a1d;
+  background-image: none;
+}
+
+.essentials-ui entry:hover
+{
+  border-color: #454b52;
+}
+
+.essentials-ui entry selection
+{
+  background-color: #2e6cb3;
+  color: #ffffff;
+}
+
+/* the blue primary actions get their own press state, a shade down rather than
+ * the grey the base theme would apply */
+.essentials-ui #essentials-library-add:active,
+.essentials-ui #essentials-open-edit:active,
+.essentials-ui #essentials-header-export:active,
+.essentials-ui button.suggested-action:active
+{
+  color: #ffffff;
+  border-color: #2961a1;
+  background-color: #2961a1;
+}
+
+/* the icon rows carry their state in the icon, so their buttons stay quiet
+ * until touched -- but a press still has to register */
+.essentials-ui #essentials-rating button:active,
+.essentials-ui #essentials-color-labels button:active
+{
+  border-color: transparent;
+  background-color: #38424c;
+}
+
+/* the editor's sliders and combos hover to @grey_60 (#919191) by default,
+ * which is the same grey wash the buttons had */
+.essentials-ui .dt_bauhaus:hover,
+.essentials-ui #right.essentials-panel .dt_bauhaus:hover
+{
+  background-color: #262d34;
+}
+
+.essentials-ui .dt_bauhaus:focus
+{
+  background-color: #262d34;
+  box-shadow: inset 0 0 0 1px #5294e2;
+}
+
+/* A dialog is its own toplevel, so it needs the class applied in C (see
+ * dt_gui_dialog_apply_experience) before any of this can reach it. The class
+ * lands ON the dialog, so these selectors must not look for a "dialog"
+ * descendant -- there isn't one. */
+.essentials-ui.background,
+.essentials-ui.dialog,
+.essentials-ui.messagedialog
+{
+  background-color: #1c2024;
+  color: #eef1f4;
+}
+
+.essentials-ui .dialog-action-box,
+.essentials-ui .dialog-action-box buttonbox
+{
+  padding: 10px 12px;
+  border-top: 1px solid #34383d;
+  background-color: #1b1e21;
+}
+
+.essentials-ui .dialog-action-box button
+{
+  min-height: 32px;
+  padding: 0 18px;
+}
+
+/* The accent comes in two shades because the two jobs pull opposite ways.
+ * Anything carrying white text -- primary buttons, selected rows, a selection
+ * in an entry -- uses #2e6cb3, dark enough for 5.4:1 against white; its hover
+ * and pressed shades stay on the same side of 4.5:1. The indicators that carry
+ * nothing -- switch, check, slider highlight, progress -- keep the lighter
+ * #397dcc, which needs contrast against the dark trough behind it instead. */
+
+/* One obvious primary action: the dialog's default response reads as the thing
+ * to do, and cancel stays quiet instead of looking equally weighted. GTK3 has
+ * no :default pseudo-class, so dt_gui_dialog_apply_experience() marks the
+ * default widget with .suggested-action. */
+.essentials-ui button.suggested-action
+{
+  color: #ffffff;
+  border-color: #5294e2;
+  background-color: #2e6cb3;
+}
+
+.essentials-ui button.suggested-action:hover
+{
+  background-color: #3376c5;
+}
+
+.essentials-ui button.suggested-action:active
+{
+  background-color: #2961a1;
+}
+
+/* the file and place lists inside the import dialog */
+.essentials-ui treeview,
+.essentials-ui treeview.view,
+.essentials-ui list,
+.essentials-ui scrolledwindow
+{
+  color: #d8dce0;
+  background-color: #171a1d;
+  border-color: #34383d;
+}
+
+.essentials-ui treeview:selected,
+.essentials-ui treeview.view:selected,
+.essentials-ui list row:selected
+{
+  color: #ffffff;
+  background-color: #2e6cb3;
+}
+
+.essentials-ui treeview header button
+{
+  color: #9299a1;
+  background-color: #1b1e21;
+  border-color: #34383d;
+}
+
+.essentials-ui notebook,
+.essentials-ui notebook header
+{
+  background-color: #1c2024;
+  border-color: #34383d;
+}
+
+.essentials-ui notebook tab:checked
+{
+  color: #f1f3f5;
+  box-shadow: inset 0 -2px #5294e2;
+}
+
+/* ---------------------------------------------------------------------------
+ * Controls.
+ *
+ * darktable's theme leaves switches, checkboxes and combos to GTK's defaults,
+ * which is where the dated look comes from. These give them one shape language:
+ * a 6px corner, a pill for anything that toggles, one blue for "on" and for
+ * focus, and a 120ms move so a change is felt rather than snapping.
+ *
+ * The bauhaus sliders are drawn in cairo, not CSS, so their shape is not
+ * reachable from here -- only their surrounding box is.
+ * ------------------------------------------------------------------------ */
+
+.essentials-ui switch
+{
+  min-width: 40px;
+  min-height: 22px;
+  border-radius: 11px;
+  border: 1px solid #3a4046;
+  background-color: #262b31;
+  background-image: none;
+  box-shadow: none;
+  transition: background-color 120ms ease-out, border-color 120ms ease-out;
+}
+
+.essentials-ui switch:hover
+{
+  border-color: #4a5157;
+}
+
+.essentials-ui switch:checked
+{
+  border-color: #397dcc;
+  background-color: #397dcc;
+}
+
+.essentials-ui switch slider
+{
+  min-width: 18px;
+  min-height: 18px;
+  margin: 1px;
+  border: none;
+  border-radius: 50%;
+  background-color: #e8ecef;
+  background-image: none;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+.essentials-ui switch:checked slider
+{
+  background-color: #ffffff;
+}
+
+.essentials-ui switch:disabled
+{
+  background-color: #1f2429;
+  border-color: #2b3036;
+}
+
+.essentials-ui switch:disabled slider
+{
+  background-color: #6c737a;
+}
+
+.essentials-ui check,
+.essentials-ui radio
+{
+  min-width: 16px;
+  min-height: 16px;
+  margin: 2px;
+  padding: 0;
+  border: 1px solid #4a5157;
+  border-radius: 4px;
+  background-color: #171a1d;
+  background-image: none;
+  box-shadow: none;
+  transition: background-color 120ms ease-out, border-color 120ms ease-out;
+}
+
+.essentials-ui radio
+{
+  border-radius: 50%;
+}
+
+.essentials-ui check:hover,
+.essentials-ui radio:hover
+{
+  border-color: #5294e2;
+}
+
+.essentials-ui check:checked,
+.essentials-ui check:indeterminate,
+.essentials-ui radio:checked
+{
+  color: #ffffff;
+  border-color: #397dcc;
+  background-color: #397dcc;
+}
+
+.essentials-ui combobox button,
+.essentials-ui combobox entry
+{
+  min-height: 30px;
+  border-radius: 6px;
+  border: 1px solid #34383d;
+  background-color: #171a1d;
+  background-image: none;
+  box-shadow: none;
+}
+
+.essentials-ui combobox button:hover
+{
+  border-color: #4a5157;
+  background-color: #1d2126;
+}
+
+.essentials-ui scale trough
+{
+  min-height: 4px;
+  border: none;
+  border-radius: 2px;
+  background-color: #2b3036;
+}
+
+.essentials-ui scale highlight
+{
+  border-radius: 2px;
+  background-color: #397dcc;
+}
+
+.essentials-ui scale slider
+{
+  min-width: 14px;
+  min-height: 14px;
+  margin: -6px;
+  border: none;
+  border-radius: 50%;
+  background-color: #e8ecef;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  transition: background-color 120ms ease-out;
+}
+
+.essentials-ui scale slider:hover
+{
+  background-color: #ffffff;
+}
+
+.essentials-ui progressbar trough
+{
+  min-height: 4px;
+  border: none;
+  border-radius: 2px;
+  background-color: #2b3036;
+}
+
+.essentials-ui progressbar progress
+{
+  border-radius: 2px;
+  background-color: #397dcc;
+}
+
+/* popovers and menus were inheriting the stock grey plate */
+.essentials-ui popover,
+.essentials-ui popover.background,
+.essentials-ui menu,
+.essentials-ui .context-menu
+{
+  padding: 4px;
+  color: #eef1f4;
+  border: 1px solid #34383d;
+  border-radius: 8px;
+  background-color: #1c2024;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.essentials-ui menu menuitem,
+.essentials-ui popover button
+{
+  min-height: 28px;
+  border-radius: 4px;
+}
+
+.essentials-ui menu menuitem:hover
+{
+  color: #ffffff;
+  background-color: #2d353d;
+}
+
+.essentials-ui tooltip,
+.essentials-ui tooltip.background
+{
+  border-radius: 6px;
+  background-color: #14181b;
+  color: #e8ecef;
+}
+
+.essentials-ui separator
+{
+  min-width: 1px;
+  min-height: 1px;
+  background-color: #2b3036;
+}
+
+/* the focused export dialog: four questions, generous spacing, one blue action */
+#essentials-export
+{
+  background-color: #1c2024;
+}
+
+#essentials-export .essentials-export-label
+{
+  color: #9299a1;
+  font-size: 0.95em;
+}
+
+#essentials-export button,
+#essentials-export combobox button
+{
+  min-height: 34px;
+}
+
+/* a tertiary action: available, but not competing with cancel or the primary */
+.essentials-ui button.essentials-tertiary
+{
+  color: #9299a1;
+  border-color: transparent;
+  background-color: transparent;
+}
+
+.essentials-ui button.essentials-tertiary:hover
+{
+  color: #d8dce0;
+  background-color: #232930;
+}
+
 #essentials-editor-title
 {
   min-height: 42px;
@@ -1446,7 +2004,7 @@ filechooser row:hover .sidebar-icon
   margin-right: 8px;
   padding: 0;
   border: none;
-  border-radius: 3px;
+  border-radius: 6px;
   background-color: transparent;
   background-image: none;
   box-shadow: none;
@@ -1466,7 +2024,7 @@ filechooser row:hover .sidebar-icon
   padding: 0 10px;
   color: #cfd6dd;
   border: 1px solid #34383d;
-  border-radius: 3px;
+  border-radius: 6px;
   background-color: transparent;
   background-image: none;
   box-shadow: none;
@@ -1608,6 +2166,44 @@ filechooser row:hover .sidebar-icon
 #right .essentials-editor #basics-widget button:checked
 {
   color: #73aef5;
+}
+
+#right .essentials-editor #essentials-module-toggle
+{
+  min-height: 32px;
+  padding: 0 6px;
+  color: #d8dce0;
+  border: 0;
+  border-radius: 4px;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+
+#right .essentials-editor #essentials-module-toggle:hover,
+#right .essentials-editor #essentials-module-toggle:focus
+{
+  color: #f1f3f5;
+  background-color: #22262a;
+}
+
+#right .essentials-editor #essentials-module-toggle check
+{
+  min-width: 14px;
+  min-height: 14px;
+  margin-right: 8px;
+  border: 1px solid #69727b;
+  border-radius: 3px;
+  background-color: #14171a;
+  background-image: none;
+  box-shadow: none;
+}
+
+#right .essentials-editor #essentials-module-toggle check:checked
+{
+  color: #ffffff;
+  border-color: #5294e2;
+  background-color: #397dcc;
 }
 
 #right .essentials-editor #quick-reset,
@@ -2999,7 +3595,7 @@ popover#log-history-popover label
 {
   min-height: 32px;
   border: 1px solid #343a40;
-  border-radius: 3px;
+  border-radius: 6px;
   background-color: #20252a;
   padding: 0 10px;
 }
@@ -3016,8 +3612,8 @@ popover#log-history-popover label
   padding: 0 16px;
   color: #ffffff;
   border: 1px solid #5294e2;
-  border-radius: 3px;
-  background-color: #397dcc;
+  border-radius: 6px;
+  background-color: #2e6cb3;
   background-image: none;
   box-shadow: none;
 }
@@ -3027,8 +3623,11 @@ popover#log-history-popover label
 {
   color: #ffffff;
   border-color: #72aaf0;
-  background-color: #478bda;
+  background-color: #3376c5;
 }
+
+
+
 
 #essentials-search-results
 {
@@ -3038,7 +3637,7 @@ popover#log-history-popover label
 #essentials-search-results button
 {
   padding: 8px 10px;
-  border-radius: 3px;
+  border-radius: 6px;
 }
 
 #essentials-search-results .capability-title,
@@ -3083,8 +3682,8 @@ popover#log-history-popover label
   margin: 4px 0 12px 0;
   color: #ffffff;
   border: 1px solid #5294e2;
-  border-radius: 3px;
-  background-color: #397dcc;
+  border-radius: 6px;
+  background-color: #2e6cb3;
   background-image: none;
   box-shadow: none;
 }
@@ -3100,14 +3699,14 @@ popover#log-history-popover label
 {
   color: #ffffff;
   border-color: #72aaf0;
-  background-color: #478bda;
+  background-color: #3376c5;
 }
 
 #essentials-library .library-destination
 {
   min-height: 34px;
   padding: 0 10px;
-  border-radius: 3px;
+  border-radius: 6px;
   border-color: transparent;
   background-color: transparent;
   background-image: none;
@@ -3137,7 +3736,7 @@ popover#log-history-popover label
 {
   color: #5294e2;
   border: 1px solid #355d88;
-  border-radius: 3px;
+  border-radius: 6px;
   padding: 1px 5px;
 }
 
@@ -3155,7 +3754,7 @@ popover#log-history-popover label
 {
   padding: 0;
   border: none;
-  border-radius: 3px;
+  border-radius: 4px;
   background-color: transparent;
   background-image: none;
   box-shadow: none;
@@ -3172,14 +3771,14 @@ popover#log-history-popover label
 #essentials-album entry
 {
   min-height: 30px;
-  border-radius: 3px;
+  border-radius: 6px;
 }
 
 #essentials-album button
 {
   min-height: 30px;
   padding: 0 12px;
-  border-radius: 3px;
+  border-radius: 6px;
 }
 
 #essentials-open-edit,
@@ -3187,13 +3786,13 @@ popover#log-history-popover label
 {
   min-height: 36px;
   margin-top: 3px;
-  border-radius: 3px;
+  border-radius: 6px;
 }
 
 #essentials-open-edit
 {
   color: #ffffff;
-  background-color: #397dcc;
+  background-color: #2e6cb3;
 }
 
 /* Keep every Essentials Library layout in the same neutral graphite system,
