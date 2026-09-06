@@ -175,6 +175,13 @@ Why that? Just because it's a developer choice and most classes use underscore i
 
 /* Views */
 @define-color darkroom_bg_color @grey_50;    /* this need to be middle grey to correctly work on images. And for all themes */
+/* The Essentials surround, picked by ui/essentials_surround. Every one is
+ * strictly achromatic (R=G=B): the darkness is a matter of taste, but a tint
+ * here would bias how the image's own colors read, which is the reason
+ * darkroom_bg_color is neutral in the first place. L* values are 14, 20, 26. */
+@define-color essentials_surround_charcoal #232323;
+@define-color essentials_surround_graphite #303030;
+@define-color essentials_surround_slate    #3d3d3d;
 @define-color darkroom_preview_bg_color @darkroom_bg_color;
 @define-color lighttable_bg_color @grey_40;
 @define-color lighttable_preview_bg_color @darkroom_bg_color;

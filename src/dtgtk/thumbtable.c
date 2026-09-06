@@ -1415,7 +1415,7 @@ static void _lighttable_expose_empty(cairo_t *cr,
                                      const int32_t height,
                                      dt_thumbtable_t *lighttable)
 {
-  dt_gui_gtk_set_source_rgb(cr, DT_GUI_COLOR_LIGHTTABLE_BG);
+  dt_gui_gtk_set_source_rgb(cr, dt_gui_image_surround_color(DT_GUI_COLOR_LIGHTTABLE_BG));
   cairo_rectangle(cr, 0, 0, width, height);
   cairo_fill(cr);
 

@@ -289,7 +289,7 @@ void gui_post_expose(dt_lib_module_t *self,
     const double size = DT_PIXEL_APPLY_DPI(d->inverted ? -15 : 15);
 
     // clear background
-    dt_gui_gtk_set_source_rgb(cri, DT_GUI_COLOR_DARKROOM_BG);
+    dt_gui_gtk_set_source_rgb(cri, dt_gui_image_surround_color(DT_GUI_COLOR_DARKROOM_BG));
     if(d->vertical)
     {
       if(d->inverted)
