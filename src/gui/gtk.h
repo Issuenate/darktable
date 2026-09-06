@@ -549,6 +549,14 @@ void dt_configure_ppd_dpi(dt_gui_gtk_t *gui);
 guint dt_gui_translated_key_state(const GdkEventKey *event);
 
 // return modifier keys currently pressed, independent of any key event
+/*
+ * Whether the guided Essentials interface is active. "auto" means the choice
+ * has not been made yet: a new user starts guided, an existing one does not.
+ * The first caller writes the resolved value back, so the answer cannot change
+ * underneath the UI once anything has asked.
+ */
+gboolean dt_essentials_mode_is_active(void);
+
 GdkModifierType dt_key_modifier_state();
 
 GtkWidget *dt_ui_resize_wrap(GtkWidget *w,

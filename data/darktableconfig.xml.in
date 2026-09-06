@@ -147,6 +147,33 @@
     <shortdescription>show welcome screen on next run</shortdescription>
     <longdescription>display the welcome setup screen the next time darktable is launched</longdescription>
   </dtconfig>
+  <dtconfig prefs="misc" section="interface" common="yes">
+    <name>ui/experience_mode</name>
+    <type>
+      <enum>
+        <option>auto</option>
+        <option>essentials</option>
+        <option>advanced</option>
+      </enum>
+    </type>
+    <default>auto</default>
+    <shortdescription>interface complexity</shortdescription>
+    <longdescription>show the guided essentials interface or the complete advanced interface</longdescription>
+  </dtconfig>
+  <dtconfig>
+    <name>ui/advanced_modulegroups_preset</name>
+    <type>string</type>
+    <default></default>
+    <shortdescription>advanced editor layout</shortdescription>
+    <longdescription>remember the editor layout while the essentials interface is active</longdescription>
+  </dtconfig>
+  <dtconfig>
+    <name>ui/advanced_modulegroups_group</name>
+    <type>int</type>
+    <default>0</default>
+    <shortdescription>advanced editor group</shortdescription>
+    <longdescription>remember the selected editor group while the essentials interface is active</longdescription>
+  </dtconfig>
   <dtconfig prefs="misc" section="interface">
     <name>accel/load_defaults</name>
     <type>bool</type>
