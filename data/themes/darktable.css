@@ -1449,6 +1449,200 @@ filechooser row:hover .sidebar-icon
   min-height: 18em;
 }
 
+/* Essentials presents the quick-access widgets as one calm editing inspector.
+ * The widgets themselves still belong to their original processing modules. */
+#essentials-editor-title
+{
+  min-height: 42px;
+  padding: 0 16px;
+  color: #f1f3f5;
+  background-color: #1b1e21;
+  border-bottom: 1px solid #34383d;
+}
+
+#essentials-editor-title label
+{
+  font-size: 1.3em;
+  font-weight: 600;
+}
+
+#essentials-tool-back
+{
+  min-width: 26px;
+  min-height: 26px;
+  margin-right: 8px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+
+#essentials-tool-back:hover
+{
+  background-color: #292f35;
+}
+
+/* a tool row opens the module's own complete interface, so it reads as a
+ * doorway rather than as another adjustment */
+#right .essentials-editor #essentials-tool
+{
+  min-height: 34px;
+  margin: 4px 0 2px 0;
+  padding: 0 10px;
+  color: #cfd6dd;
+  border: 1px solid #34383d;
+  border-radius: 3px;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+
+#right .essentials-editor #essentials-tool:hover,
+#right .essentials-editor #essentials-tool:focus
+{
+  color: #ffffff;
+  border-color: #5294e2;
+  background-color: #232930;
+}
+
+#left.essentials-panel,
+#right.essentials-panel,
+#left.essentials-panel viewport,
+#right.essentials-panel viewport
+{
+  background-color: #1b1e21;
+}
+
+#right.essentials-panel
+{
+  min-width: 340px;
+}
+
+#right .essentials-editor
+{
+  padding: 0 0 18px 0;
+  background-color: #1b1e21;
+}
+
+#right.essentials-panel #main-histogram
+{
+  min-height: 132px;
+  padding: 0;
+  margin: 0;
+  background-color: #151719;
+  border-bottom: 1px solid #34383d;
+}
+
+#right .essentials-editor #essentials-edit-section
+{
+  padding: 0 14px;
+  border-bottom: 1px solid #34383d;
+  background-color: #1b1e21;
+}
+
+#right .essentials-editor #essentials-edit-section > title
+{
+  min-height: 46px;
+  padding: 0 2px;
+  color: #f1f3f5;
+  background-color: transparent;
+}
+
+#right .essentials-editor #essentials-edit-section > title:hover
+{
+  color: #ffffff;
+  background-color: #202428;
+}
+
+#right .essentials-editor #essentials-edit-section > title label
+{
+  font-size: 1.08em;
+  font-weight: 600;
+}
+
+#right .essentials-editor #essentials-edit-section > box
+{
+  padding: 0 0 14px 0;
+}
+
+#right .essentials-editor #basics-header-box
+{
+  min-height: 34px;
+  padding: 10px 2px 5px 2px;
+  border-top: 1px solid #34383d;
+}
+
+#right .essentials-editor > widget:first-child #basics-header-box
+{
+  border-top: none;
+}
+
+#right .essentials-editor #basics-module-hbox > box
+{
+  padding: 2px 2px 10px 2px;
+}
+
+#right .essentials-editor .dt_section_label
+{
+  margin: 0;
+  color: #eceff1;
+  border: none;
+  font-size: 1.05em;
+  font-weight: 600;
+}
+
+#right .essentials-editor .dt_bauhaus
+{
+  min-height: 38px;
+  margin: 1px 0;
+  color: #eef1f4;
+  background-color: transparent;
+  border: none;
+  border-radius: 0;
+}
+
+#right .essentials-editor .dt_bauhaus:hover
+{
+  color: #ffffff;
+  background-color: #22262a;
+}
+
+#right .essentials-editor #basics-widget
+{
+  min-height: 36px;
+  padding: 0 2px;
+}
+
+#right .essentials-editor #basics-widget #basics-iop_name
+{
+  color: #d8dce0;
+  font-size: 0.96em;
+}
+
+#right .essentials-editor #basics-widget button
+{
+  min-width: 28px;
+  min-height: 28px;
+  color: #aeb4bb;
+  border: none;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+
+#right .essentials-editor #basics-widget button:checked
+{
+  color: #73aef5;
+}
+
+#right .essentials-editor #quick-reset,
+#right .essentials-editor .dt_module_btn
+{
+  color: #aeb4bb;
+}
+
 /*--------------------------------------------------
   - Collect module and quick filters on header bar -
 --------------------------------------------------*/
@@ -2780,4 +2974,276 @@ popover#log-history-popover label
   color: @fg_color;
   margin-top: 2px;
   margin-right: 2px;
+}
+
+/* beginner-first essentials shell */
+#essentials-header
+{
+  min-height: 38px;
+  padding: 7px 12px;
+  background-color: #181b1e;
+}
+
+#essentials-guided button
+{
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 0;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+
+#essentials-guided button:hover,
+#essentials-guided button:focus,
+#essentials-guided button:active
+{
+  padding: 0 10px;
+  border: 1px solid transparent;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+
+#essentials-guided .stage.active
+{
+  color: @fg_color;
+  border-bottom-color: #5294e2;
+}
+
+#essentials-guided .stage-index
+{
+  min-width: 22px;
+  min-height: 22px;
+  border: 1px solid #6c737a;
+  border-radius: 11px;
+}
+
+#essentials-guided .stage.active .stage-index
+{
+  color: #ffffff;
+  background-color: #5294e2;
+  border-color: #5294e2;
+}
+
+#essentials-search
+{
+  min-height: 32px;
+  border: 1px solid #343a40;
+  border-radius: 3px;
+  background-color: #20252a;
+  padding: 0 10px;
+}
+
+#essentials-search:focus
+{
+  border-color: #5294e2;
+}
+
+#essentials-header-export
+{
+  min-height: 32px;
+  min-width: 92px;
+  padding: 0 16px;
+  color: #ffffff;
+  border: 1px solid #5294e2;
+  border-radius: 3px;
+  background-color: #397dcc;
+  background-image: none;
+  box-shadow: none;
+}
+
+#essentials-header-export:hover,
+#essentials-header-export:focus
+{
+  color: #ffffff;
+  border-color: #72aaf0;
+  background-color: #478bda;
+}
+
+#essentials-search-results
+{
+  padding: 6px;
+}
+
+#essentials-search-results button
+{
+  padding: 8px 10px;
+  border-radius: 3px;
+}
+
+#essentials-search-results .capability-title,
+#essentials-library .library-title,
+#essentials-inspector .inspector-title,
+#essentials-inspector .inspector-section-title
+{
+  font-weight: bold;
+}
+
+#essentials-search-results .capability-description,
+#essentials-inspector .inspector-meta,
+#essentials-inspector .inspector-empty
+{
+  color: @fg_color;
+}
+
+#essentials-library
+{
+  min-width: 190px;
+  padding: 14px 12px;
+  background-color: #1c2024;
+}
+
+#essentials-library .library-title
+{
+  margin-bottom: 4px;
+  color: #f1f3f5;
+  font-size: 1.15em;
+}
+
+#essentials-library .library-storage-note
+{
+  margin: -6px 4px 10px 4px;
+  color: #9299a1;
+  font-size: 0.9em;
+}
+
+#essentials-library-add
+{
+  min-height: 38px;
+  margin: 4px 0 12px 0;
+  color: #ffffff;
+  border: 1px solid #5294e2;
+  border-radius: 3px;
+  background-color: #397dcc;
+  background-image: none;
+  box-shadow: none;
+}
+
+#essentials-library-add label
+{
+  color: #ffffff;
+  background-color: transparent;
+}
+
+#essentials-library-add:hover,
+#essentials-library-add:focus
+{
+  color: #ffffff;
+  border-color: #72aaf0;
+  background-color: #478bda;
+}
+
+#essentials-library .library-destination
+{
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 3px;
+  border-color: transparent;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+
+#essentials-library .library-destination:hover,
+#essentials-library .library-destination:focus
+{
+  background-color: #292f35;
+}
+
+#essentials-inspector
+{
+  min-width: 220px;
+  padding: 18px 16px;
+  background-color: #1c2024;
+}
+
+#essentials-inspector .inspector-empty
+{
+  padding: 8px 0;
+  color: #9299a1;
+}
+
+#essentials-inspector .inspector-badge
+{
+  color: #5294e2;
+  border: 1px solid #355d88;
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+#essentials-inspector .inspector-section-title
+{
+  margin-top: 6px;
+  color: #c5ccd3;
+  font-size: 0.95em;
+}
+
+/* the rating, reject and color label icons carry the state, so the buttons
+ * around them stay invisible until they are hovered */
+#essentials-rating button,
+#essentials-color-labels button
+{
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+
+#essentials-rating button:hover,
+#essentials-color-labels button:hover,
+#essentials-rating button:focus,
+#essentials-color-labels button:focus
+{
+  background-color: #292f35;
+}
+
+#essentials-album entry
+{
+  min-height: 30px;
+  border-radius: 3px;
+}
+
+#essentials-album button
+{
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 3px;
+}
+
+#essentials-open-edit,
+#essentials-open-export
+{
+  min-height: 36px;
+  margin-top: 3px;
+  border-radius: 3px;
+}
+
+#essentials-open-edit
+{
+  color: #ffffff;
+  background-color: #397dcc;
+}
+
+/* Keep every Essentials Library layout in the same neutral graphite system,
+ * including culling and full-preview modes created after import. */
+#main_window.essentials-ui .dt_thumbtable,
+#main_window.essentials-ui .dt_fullview
+{
+  background-color: #0e1012;
+}
+
+#main_window.essentials-ui .dt_fullview #thumb-back
+{
+  background-color: #171a1d;
+  border-color: #30353a;
+}
+
+#main_window.essentials-ui .dt_fullview #thumb-main:active #thumb-back,
+#main_window.essentials-ui .dt_fullview #thumb-main:selected #thumb-back
+{
+  background-color: #20252a;
 }
