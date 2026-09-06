@@ -20,6 +20,7 @@
 #include "control/control.h"
 #include "dtgtk/button.h"
 #include "dtgtk/paint.h"
+#include "gui/accelerators.h"
 #include "gui/gtk.h"
 #include "libs/lib.h"
 #include "libs/lib_api.h"
@@ -357,17 +358,13 @@ static void _open_export(GtkButton *button, dt_lib_module_t *self)
   g_return_if_fail(dt_capability_get(DT_ESSENTIALS_ACTION("export.open")));
   (void)button;
   (void)self;
-  dt_lib_module_t *export_module = dt_lib_get_module("export");
-  if(export_module)
-  {
-    GtkWidget *widget = export_module->expander ? export_module->expander
-                                                : export_module->widget;
-    if(widget)
-      gtk_widget_show(widget);
-    dt_lib_gui_set_expanded(export_module, TRUE);
-    dt_toast_log(
-        _("advanced export opened while essentials export is being built"));
-  }
+  /* the header owns the export dialog, so the inspector asks for its action
+   * rather than opening a second one. dt_action_process() only logs when the
+   * path does not resolve, which would leave the button looking dead */
+  const float result =
+      dt_action_process("lib/essentials_header/export", 0, NULL, "activate", 1.0f);
+  if(result == DT_ACTION_NOT_VALID)
+    dt_toast_log(_("export is unavailable in this view"));
 }
 
 static void _selection_changed(gpointer instance, dt_lib_module_t *self)
