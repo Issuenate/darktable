@@ -719,7 +719,7 @@ static gboolean _event_image_draw(GtkWidget *widget,
 
   if(!dt_is_valid_imgid(thumb->imgid))
   {
-    dt_gui_gtk_set_source_rgb(cr, DT_GUI_COLOR_LIGHTTABLE_BG);
+    dt_gui_gtk_set_source_rgb(cr, dt_gui_image_surround_color(DT_GUI_COLOR_LIGHTTABLE_BG));
     cairo_paint(cr);
     return TRUE;
   }

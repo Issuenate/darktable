@@ -157,8 +157,22 @@
       </enum>
     </type>
     <default>auto</default>
-    <shortdescription>interface complexity</shortdescription>
-    <longdescription>show the guided essentials interface or the complete advanced interface</longdescription>
+    <shortdescription>interface</shortdescription>
+    <longdescription>the guided interface is the simple one, with the three-step workflow; the complete interface is darktable's full set of panels and modules, which the guided one does not expose (masks, styles, module order and most processing modules). this preference is the only way between them</longdescription>
+  </dtconfig>
+  <dtconfig prefs="misc" section="interface" common="yes">
+    <name>ui/essentials_surround</name>
+    <type>
+      <enum>
+        <option>graphite</option>
+        <option>charcoal</option>
+        <option>slate</option>
+        <option>neutral</option>
+      </enum>
+    </type>
+    <default>graphite</default>
+    <shortdescription>background behind the photo</shortdescription>
+    <longdescription>shade of the neutral surround drawn behind a photo in the essentials interface; neutral keeps darktable's middle grey, which is the most accurate for judging color</longdescription>
   </dtconfig>
   <dtconfig>
     <name>ui/advanced_modulegroups_preset</name>
