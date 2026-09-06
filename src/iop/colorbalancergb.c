@@ -29,6 +29,7 @@
 #include "develop/imageop_math.h"
 #include "develop/openmp_maths.h"
 #include "develop/imageop_gui.h"
+#include "dtgtk/colorwheel.h"
 #include "dtgtk/drawingarea.h"
 #include "dtgtk/gradientslider.h"
 #include "gui/accelerators.h"
@@ -133,6 +134,10 @@ typedef struct dt_iop_colorbalancergb_gui_data_t
   gboolean mask_display;
   dt_iop_colorbalancergb_mask_data_t mask_type;
   const dt_iop_order_iccprofile_info_t *sliders_output_profile;
+  GtkWidget *global_wheel, *shadows_wheel, *midtones_wheel, *highlights_wheel;
+  /* the wheels paint themselves through _colorwheel_rgb(), which needs the
+   * same profile and matrix the sliders' gradients are painted with */
+  dt_colormatrix_t wheel_output_matrix;
 } dt_iop_colorbalancergb_gui_data_t;
 
 
@@ -1389,6 +1394,33 @@ static void paint_chroma_slider(const dt_iop_order_iccprofile_info_t *output_pro
 }
 
 
+/* paint one point of a wheel's disc, in the module's own output profile */
+static void _colorwheel_rgb(const float hue,
+                            const float radius,
+                            float rgb[3],
+                            gpointer user_data)
+{
+  const dt_iop_module_t *self = user_data;
+  const dt_iop_colorbalancergb_gui_data_t *g = self->gui_data;
+  const dt_iop_order_iccprofile_info_t *profile = g->sliders_output_profile;
+  if(!profile)
+  {
+    rgb[0] = rgb[1] = rgb[2] = 0.2f;
+    return;
+  }
+
+  const float h = CONVENTIONAL_DEG_TO_YRG_RAD(hue);
+  /* clip to what the profile can actually show, so the rim does not turn into
+   * a band of identical clipped color */
+  const float max_chroma =
+    Ych_max_chroma_without_negatives(g->wheel_output_matrix, cosf(h), sinf(h));
+  /* paint the disc over a fixed, readable chroma sweep rather than the
+   * parameter's own range, which is far too narrow to see */
+  dt_aligned_pixel_t RGB;
+  _YchToRGB(&RGB, MIN(radius * 0.25f, max_chroma), h, profile, g->wheel_output_matrix);
+  for(int c = 0; c < 3; c++) rgb[c] = RGB[c];
+}
+
 static void paint_hue_sliders(const dt_iop_order_iccprofile_info_t *output_profile,
                               const dt_colormatrix_t output_matrix_LMS_to_RGB,
                               const dt_iop_colorbalancergb_gui_data_t *const g)
@@ -1672,7 +1704,14 @@ void gui_changed(dt_iop_module_t *self, GtkWidget *w, void *previous)
    DT_ENTER_GUI_UPDATE();
 
   if(output_profile_changed)
+  {
     paint_hue_sliders(output_profile, output_matrix, g);
+    memcpy(g->wheel_output_matrix, output_matrix, sizeof(dt_colormatrix_t));
+    dtgtk_color_wheel_invalidate(g->global_wheel);
+    dtgtk_color_wheel_invalidate(g->shadows_wheel);
+    dtgtk_color_wheel_invalidate(g->midtones_wheel);
+    dtgtk_color_wheel_invalidate(g->highlights_wheel);
+  }
 
   if(!w || w == g->global_H || output_profile_changed)
     paint_chroma_slider(output_profile, output_matrix, g->global_C, p->global_H);
@@ -1773,6 +1812,29 @@ void gui_reset(dt_iop_module_t *self)
 {
   //dt_iop_colorbalancergb_gui_data_t *g = self->gui_data;
   dt_iop_color_picker_reset(self, TRUE);
+}
+
+/* a wheel above the sliders it drives: the same two parameters, reachable
+ * either by dragging a point of color or by typing a number */
+static GtkWidget *_add_color_wheel(dt_iop_module_t *self,
+                                   GtkWidget *hue,
+                                   GtkWidget *chroma)
+{
+  /* size the disc by the slider's soft range, not its hard one: every chroma
+   * slider tops out at 1.0 but is presented over 0.01 to 0.5, so the hard max
+   * would squeeze all usable grading into a dot at the center */
+  GtkWidget *wheel = dtgtk_color_wheel_new(hue, chroma,
+                                           dt_bauhaus_slider_get_soft_max(chroma),
+                                           _colorwheel_rgb, self);
+  gtk_widget_set_tooltip_text(wheel,
+                              _("drag to set the hue and chroma of this range\n"
+                                "scroll to change chroma, double-click to clear"));
+  GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+  gtk_widget_set_halign(wheel, GTK_ALIGN_CENTER);
+  gtk_widget_set_size_request(wheel, DT_PIXEL_APPLY_DPI(132), DT_PIXEL_APPLY_DPI(132));
+  gtk_box_pack_start(GTK_BOX(row), wheel, TRUE, FALSE, DT_PIXEL_APPLY_DPI(4));
+  dt_gui_box_add(self->widget, row);
+  return wheel;
 }
 
 void gui_init(dt_iop_module_t *self)
@@ -1900,6 +1962,7 @@ void gui_init(dt_iop_module_t *self)
   dt_bauhaus_slider_set_digits(g->global_C, 4);
   dt_bauhaus_slider_set_format(g->global_C, "%");
   gtk_widget_set_tooltip_text(g->global_C, _("chroma of the global color offset"));
+  g->global_wheel = _add_color_wheel(self, g->global_H, g->global_C);
 
   dt_gui_box_add(self->widget, dt_ui_section_label_new(C_("section", "shadows lift")));
   sect = DT_IOP_SECTION_FOR_PARAMS(self, N_("lift"));
@@ -1921,6 +1984,7 @@ void gui_init(dt_iop_module_t *self)
   dt_bauhaus_slider_set_digits(g->shadows_C, 4);
   dt_bauhaus_slider_set_format(g->shadows_C, "%");
   gtk_widget_set_tooltip_text(g->shadows_C, _("chroma of the color gain in shadows"));
+  g->shadows_wheel = _add_color_wheel(self, g->shadows_H, g->shadows_C);
 
   dt_gui_box_add(self->widget, dt_ui_section_label_new(C_("section", "highlights gain")));
   sect = DT_IOP_SECTION_FOR_PARAMS(self, N_("gain"));
@@ -1942,6 +2006,7 @@ void gui_init(dt_iop_module_t *self)
   dt_bauhaus_slider_set_digits(g->highlights_C, 4);
   dt_bauhaus_slider_set_format(g->highlights_C, "%");
   gtk_widget_set_tooltip_text(g->highlights_C, _("chroma of the color gain in highlights"));
+  g->highlights_wheel = _add_color_wheel(self, g->highlights_H, g->highlights_C);
 
   dt_gui_box_add(self->widget, dt_ui_section_label_new(C_("section", "power")));
   sect = DT_IOP_SECTION_FOR_PARAMS(self, N_("power"));
@@ -1963,6 +2028,7 @@ void gui_init(dt_iop_module_t *self)
   dt_bauhaus_slider_set_digits(g->midtones_C, 4);
   dt_bauhaus_slider_set_format(g->midtones_C, "%");
   gtk_widget_set_tooltip_text(g->midtones_C, _("chroma of the color exponent in mid-tones"));
+  g->midtones_wheel = _add_color_wheel(self, g->midtones_H, g->midtones_C);
 
   // Page masks
   self->widget = dt_ui_notebook_page(g->notebook, N_("masks"), _("isolate luminances"));
