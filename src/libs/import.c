@@ -2037,6 +2037,7 @@ static void _import_from_dialog_new(dt_lib_module_t* self)
      _(_import_text[d->import_case]), GTK_RESPONSE_ACCEPT,
      NULL);
   gtk_dialog_set_default_response(GTK_DIALOG(d->from.dialog), GTK_RESPONSE_ACCEPT);
+  dt_gui_dialog_apply_experience(d->from.dialog);
   dt_gui_dialog_add_help(GTK_DIALOG(d->from.dialog), "import_dialog");
 
 #ifdef GDK_WINDOWING_QUARTZ

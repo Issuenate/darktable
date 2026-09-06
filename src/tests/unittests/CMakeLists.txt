@@ -12,6 +12,10 @@ add_cmocka_test(test_capabilities
                 SOURCES test_capabilities.c
                 LINK_LIBRARIES lib_darktable cmocka::cmocka)
 
+add_cmocka_test(test_essentials_export
+                SOURCES test_essentials_export.c
+                LINK_LIBRARIES lib_darktable cmocka::cmocka)
+
 # Windows: main-method requires the wrapper provided by lib-darktable
 if(WIN32)
     target_link_libraries(test_sample PRIVATE lib_darktable)

@@ -444,9 +444,11 @@ static const dt_capability_descriptor_t _capabilities[] = {
     .agent_exposure = DT_CAPABILITY_PREVIEWABLE,
     .navigation_target = "essentials.inspector.export" },
 
+  /* a signpost, not a switch: the complete interface is reached through the
+     preference, so this says where it lives rather than turning it on */
   { .id = "ui.advanced", .version = 1,
     .name = "advanced mode",
-    .description = "show the complete darktable interface",
+    .description = "where to turn on the complete darktable interface",
     .synonyms = _advanced_synonyms, .examples = _advanced_examples,
     .help_reference = "preferences",
     .contexts = DT_CAPABILITY_CONTEXT_GLOBAL,
@@ -458,7 +460,7 @@ static const dt_capability_descriptor_t _capabilities[] = {
     .supports_undo = FALSE,
     .supports_cancellation = FALSE,
     .agent_exposure = DT_CAPABILITY_DISCOVERY,
-    .navigation_target = "essentials.header.advanced" },
+    .navigation_target = "preferences.miscellaneous.interface" },
 
   { .id = "edit.profile.choose", .version = 1,
     .name = "profile",
