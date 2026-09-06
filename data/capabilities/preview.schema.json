@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://darktable.org/schemas/preview/v1",
+  "title": "darktable plan preview",
+  "type": "object",
+  "required": ["schema_version", "preview_id", "plan_id", "state_hash", "expires_at", "changes", "warnings", "writes_performed"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "preview_id": { "type": "string", "format": "uuid" },
+    "plan_id": { "type": "string", "format": "uuid" },
+    "state_hash": { "type": "string" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "changes": { "type": "array", "items": { "type": "object" } },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "render": { "type": "object", "properties": { "mime_type": { "type": "string" }, "width": { "type": "integer" }, "height": { "type": "integer" }, "token": { "type": "string" } }, "additionalProperties": false },
+    "writes_performed": { "const": false }
+  },
+  "additionalProperties": false
+}

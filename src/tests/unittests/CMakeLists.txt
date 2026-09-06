@@ -9,11 +9,21 @@ add_cmocka_test(test_sample
                 SOURCES test_sample.c
                 LINK_LIBRARIES cmocka)
 
+add_cmocka_test(test_capabilities
+                SOURCES test_capabilities.c
+                LINK_LIBRARIES lib_darktable cmocka::cmocka)
+
 # Windows: main-method requires the wrapper provided by lib-darktable
 if(WIN32)
     target_link_libraries(test_sample PRIVATE lib_darktable)
     _copy_required_library(test_sample lib_darktable)
 endif(WIN32)
+
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME test_essentials_capability_registration
+           COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/check_capability_registry.py)
+endif()
 
 # HDR exposure-bracket auto-alignment. Calls the public dt_hdr_alignment_* API
 # exported from lib_darktable (which carries the OpenCV-linked objects); the test

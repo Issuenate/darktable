@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://darktable.org/schemas/plan/v1",
+  "title": "darktable typed plan",
+  "type": "object",
+  "required": ["schema_version", "plan_id", "created_at", "targets", "actions", "risk", "permissions", "preconditions", "expected_outcome", "confirmation", "state_hash"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "plan_id": { "type": "string", "format": "uuid" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "id"],
+        "properties": {
+          "kind": { "enum": ["photo", "selection", "library"] },
+          "id": { "type": ["string", "integer"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "actions": { "type": "array", "minItems": 1, "items": { "type": "object", "required": ["sequence", "capability_id", "capability_version", "arguments"], "properties": { "sequence": { "type": "integer", "minimum": 0 }, "capability_id": { "type": "string" }, "capability_version": { "type": "integer", "minimum": 1 }, "arguments": { "type": "object" } }, "additionalProperties": false } },
+    "risk": { "enum": ["none", "low", "medium", "high"] },
+    "permissions": { "type": "array", "items": { "$ref": "permission.schema.json" } },
+    "preconditions": { "type": "array", "items": { "type": "string" } },
+    "expected_outcome": { "type": "string" },
+    "confirmation": { "enum": ["not_required", "required", "granted", "denied"] },
+    "state_hash": { "type": "string", "minLength": 16 },
+    "idempotency_key": { "type": "string", "minLength": 16 }
+  },
+  "additionalProperties": false
+}
