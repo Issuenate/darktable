@@ -43,5 +43,4 @@ exec "$darktable_bin" \
   --cachedir "$profile_dir/cache" \
   --tmpdir "$profile_dir/tmp" \
   --library "$profile_dir/library.db" \
-  --conf ui/experience_mode=essentials \
   "$@"

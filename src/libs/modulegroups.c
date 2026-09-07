@@ -613,6 +613,22 @@ static void _basics_on_off_label_callback(GtkGestureSingle *gesture,
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(btn), !gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(btn)));
 }
 
+static void _basics_proxy_toggled(GtkToggleButton *proxy,
+                                  GtkToggleButton *target)
+{
+  const gboolean active = gtk_toggle_button_get_active(proxy);
+  if(active != gtk_toggle_button_get_active(target))
+    gtk_toggle_button_set_active(target, active);
+}
+
+static void _basics_target_toggled(GtkToggleButton *target,
+                                   GtkToggleButton *proxy)
+{
+  const gboolean active = gtk_toggle_button_get_active(target);
+  if(active != gtk_toggle_button_get_active(proxy))
+    gtk_toggle_button_set_active(proxy, active);
+}
+
 static void _sync_visibility(GtkWidget *widget,
                              GParamSpec *pspec,
                              dt_lib_modulegroups_basic_item_t *item)
@@ -662,41 +678,70 @@ static void _basics_add_widget(dt_lib_module_t *self, dt_lib_modulegroups_basic_
       item->box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
       gtk_widget_set_name(item->box, "basics-widget");
 
-      // we create a new button linked with the real one
-      // because it create too much pb to remove the button from the expander
-      GtkWidget *btn = dt_iop_gui_header_button(item->module,
-                                                dtgtk_cairo_paint_switch,
-                                                DT_ACTION_ELEMENT_ENABLE,
-                                                item->box);
-      GtkWidget *evb = gtk_event_box_new();
-      const char *module_name = essentials ? _essentials_module_name(item->module->op) : NULL;
-      GtkWidget *lb = gtk_label_new(module_name ? module_name : item->module->name());
-      gtk_label_set_xalign(GTK_LABEL(lb), 0.0);
-      gtk_widget_set_name(lb, "basics-iop_name");
-      gtk_container_add(GTK_CONTAINER(evb), lb);
-      /* Keep the label proxy in sync with the enable button.  In particular,
-       * an insensitive button can still be toggled by set_active(). */
-      gtk_widget_set_sensitive(evb, gtk_widget_get_sensitive(btn));
-      dt_gui_connect_click(evb, _basics_on_off_label_callback, NULL, btn);
-      gtk_box_pack_start(GTK_BOX(item->box), evb, FALSE, TRUE, 0);
+      GtkWidget *btn = NULL;
+      GtkWidget *label_widget = NULL;
+      GtkWidget *label_box = NULL;
+      if(essentials)
+      {
+        const char *module_name = _essentials_module_name(item->module->op);
+        btn = gtk_check_button_new_with_label(module_name ? module_name
+                                                          : item->module->name());
+        gtk_widget_set_name(btn, "essentials-module-toggle");
+        /* the row reads as a list, so the name starts where every other
+         * section's does; a GtkButton centers its child otherwise */
+        GtkWidget *check_label = gtk_bin_get_child(GTK_BIN(btn));
+        if(GTK_IS_LABEL(check_label))
+          gtk_label_set_xalign(GTK_LABEL(check_label), 0.0);
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(btn),
+                                     gtk_toggle_button_get_active(
+                                         GTK_TOGGLE_BUTTON(item->widget)));
+        gtk_widget_set_sensitive(btn, gtk_widget_get_sensitive(item->widget));
+        g_signal_connect(btn, "toggled", G_CALLBACK(_basics_proxy_toggled),
+                         item->widget);
+        g_signal_connect_object(item->widget, "toggled",
+                                G_CALLBACK(_basics_target_toggled), btn, 0);
+        gtk_box_pack_start(GTK_BOX(item->box), btn, TRUE, TRUE, 0);
+        label_widget = btn;
+        label_box = btn;
+      }
+      else
+      {
+        // we create a new button linked with the real one because removing the
+        // original button from the expander causes lifecycle problems.
+        btn = dt_iop_gui_header_button(item->module,
+                                       dtgtk_cairo_paint_switch,
+                                       DT_ACTION_ELEMENT_ENABLE,
+                                       item->box);
+        GtkWidget *evb = gtk_event_box_new();
+        GtkWidget *lb = gtk_label_new(item->module->name());
+        gtk_label_set_xalign(GTK_LABEL(lb), 0.0);
+        gtk_widget_set_name(lb, "basics-iop_name");
+        gtk_container_add(GTK_CONTAINER(evb), lb);
+        gtk_widget_set_sensitive(evb, gtk_widget_get_sensitive(btn));
+        dt_gui_connect_click(evb, _basics_on_off_label_callback, NULL, btn);
+        gtk_box_pack_start(GTK_BOX(item->box), evb, FALSE, TRUE, 0);
+        label_widget = lb;
+        label_box = evb;
+      }
 
       // disable widget if needed (multiinstance)
       if(dt_iop_count_instances(item->module->so) > 1)
       {
-        gtk_widget_set_sensitive(evb, FALSE);
+        const char *multi_instance =
+            _("this quick access widget is disabled as there are multiple instances "
+              "of this module present. Please use the full module to access this widget...");
         gtk_widget_set_sensitive(btn, FALSE);
-        gtk_widget_set_tooltip_text(
-            lb, _("this quick access widget is disabled as there are multiple instances "
-                  "of this module present. Please use the full module to access this widget..."));
-        gtk_widget_set_tooltip_text(
-            btn, _("this quick access widget is disabled as there are multiple instances "
-                   "of this module present. Please use the full module to access this widget..."));
+        /* the label carries a click of its own, and an insensitive button can
+         * still be toggled through set_active(), so it has to go too */
+        gtk_widget_set_sensitive(label_box, FALSE);
+        gtk_widget_set_tooltip_text(label_widget, multi_instance);
+        gtk_widget_set_tooltip_text(btn, multi_instance);
       }
       else
       {
         GtkWidget *orig_label = gtk_widget_get_parent(item->module->label);
         gchar *tooltip = gtk_widget_get_tooltip_text(orig_label);
-        gtk_widget_set_tooltip_text(lb, tooltip);
+        gtk_widget_set_tooltip_text(label_widget, tooltip);
         gtk_widget_set_tooltip_text(btn, tooltip);
         g_free(tooltip);
       }
