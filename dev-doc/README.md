@@ -34,7 +34,7 @@ This guide covers building Image Operation (IOP) modules for darktable's darkroo
 ### Essentials Interface
 | File | Description |
 |------|-------------|
-| **[Essentials_UI_Architecture.md](Essentials_UI_Architecture.md)** | The guided interface: experience mode, module facade, editor sections, albums, styling hooks |
+| **[Essentials_UI_Architecture.md](Essentials_UI_Architecture.md)** | The guided interface: experience mode, module facade, editor sections, albums, export, styling hooks |
 
 ### Guides
 | File | Description |
