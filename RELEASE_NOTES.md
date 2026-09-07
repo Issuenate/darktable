@@ -89,13 +89,15 @@ changes (where available).
   panel for rating, color labels and albums, and an editor built from
   plain-language sections such as light, color and detail. A "find
   anything" box searches everything the interface can do by everyday
-  phrase, for example "make brighter" or "fix the horizon". The
+  phrase, for example "make brighter" or "fix the horizon". Export
+  asks four questions - where, what format, how large, how good - and
+  offers the complete export module behind "more options...". The
   controls are darktable's own, so history, undo, sidecars and
-  rendered output are identical to the complete interface, and the
-  Advanced switch in the header returns to it with the saved module
-  layout untouched. New installations start in essentials; existing
-  ones are unaffected. The mode is also under preferences >
-  miscellaneous > interface.
+  rendered output are identical to the complete interface, which is
+  reached under preferences > miscellaneous > interface and comes back
+  with the saved module layout untouched. New installations start in
+  essentials; existing ones are unaffected. The tone behind the photo
+  can be picked separately, under the same preferences section.
 
 ## UI/UX Improvements
 
@@ -125,6 +127,18 @@ changes (where available).
 - Added an interactive editing mode allowing users to correct a color
   by selecting it directly on the photo with the mouse wheel, just as
   was already possible with the "tone equalizer" module.
+
+- The "color balance rgb" module's 4 ways tab now has a color wheel
+  for each range - global, shadows, midtones and highlights - so the
+  hue and chroma of a range can be reached as one point instead of
+  through two sliders. The disc is painted with the module's own
+  colors and the current output profile, so it matches the sliders
+  rather than showing a generic circle, and the sliders stay for
+  precise input.
+
+- The welcome screen now has a "don't show this again" checkbox.
+  Previously the screen was shown once and never offered again, with
+  no way to ask for it back.
 
 ## Performance Improvements
 
