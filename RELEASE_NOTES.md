@@ -101,6 +101,11 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Import Lightroom XMP develop presets through the styles module. Exposure,
+  grain, split toning, clarity, basic vignetting, composite and per-channel
+  point curves, parametric curves, and eight-band HSL adjustments are converted
+  approximately; omitted settings are listed in the imported style's description.
+
 - Checkboxes are now Bauhaus widgets and are reset to default values
   when e.g. a tab or a module is reset.
 

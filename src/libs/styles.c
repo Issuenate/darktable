@@ -601,7 +601,15 @@ static void _import_clicked(GtkWidget *w, dt_lib_styles_t *d)
   filter = GTK_FILE_FILTER(gtk_file_filter_new());
   gtk_file_filter_add_pattern(filter, "*.dtstyle");
   gtk_file_filter_add_pattern(filter, "*.DTSTYLE");
-  gtk_file_filter_set_name(filter, _("darktable style files"));
+  gtk_file_filter_add_pattern(filter, "*.xmp");
+  gtk_file_filter_add_pattern(filter, "*.XMP");
+  gtk_file_filter_set_name(filter, _("darktable styles and Lightroom XMP presets"));
+  gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(filechooser), filter);
+
+  filter = GTK_FILE_FILTER(gtk_file_filter_new());
+  gtk_file_filter_add_pattern(filter, "*.xmp");
+  gtk_file_filter_add_pattern(filter, "*.XMP");
+  gtk_file_filter_set_name(filter, _("lightroom XMP presets (approximate conversion)"));
   gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(filechooser), filter);
 
   filter = GTK_FILE_FILTER(gtk_file_filter_new());
@@ -935,7 +943,8 @@ void gui_init(dt_lib_module_t *self)
   d->import_button = dt_action_button_new
     (self, N_("import..."),
      _import_clicked, d,
-     _("import styles from a style files"), 0, 0);
+     _("import darktable styles or Lightroom XMP presets\n"
+       "conversion is approximate; omitted settings are listed in the style description"), 0, 0);
 
   // export button
   d->export_button = dt_action_button_new
