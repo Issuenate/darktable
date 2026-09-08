@@ -1626,18 +1626,11 @@ static void _blendop_blendif_invert(GtkGestureSingle *gesture,
   dt_dev_add_history_item(darktable.develop, module, TRUE);
 }
 
-static void _blendop_masks_add_shape(GtkGestureSingle *gesture,
-                                         gint n_press,
-                                         gdouble x,
-                                         gdouble y,
-                                         dt_iop_module_t *self)
+static void _blendop_masks_create_shape(GtkWidget *widget,
+                                        dt_iop_module_t *self,
+                                        const gboolean continuous)
 {
-  GtkWidget *widget = dt_gui_get_widget(gesture);
-
   dt_iop_gui_blend_data_t *bd = self->blend_data;
-
-  const GdkModifierType state = dt_gui_current_state(gesture);
-  const gboolean continuous = dt_modifier_is(state, GDK_CONTROL_MASK);
 
   // find out who we are
   int this = -1;
@@ -1650,6 +1643,15 @@ static void _blendop_masks_add_shape(GtkGestureSingle *gesture,
     }
   }
 
+#ifdef HAVE_AI
+  const int object_selection = GPOINTER_TO_INT(
+    g_object_get_data(G_OBJECT(widget), "object-selection"));
+  if(object_selection)
+  {
+    this = 5;
+    widget = bd->masks_shapes[this];
+  }
+#endif
   if(this < 0) return;
 
 #ifdef HAVE_AI
@@ -1676,6 +1678,9 @@ static void _blendop_masks_add_shape(GtkGestureSingle *gesture,
   dt_masks_form_t *form = dt_masks_create(bd->masks_type[this]);
   dt_masks_change_form_gui(form);
   darktable.develop->form_gui->creation_module = self;
+#ifdef HAVE_AI
+  darktable.develop->form_gui->object_selection = object_selection;
+#endif
 
   if(continuous)
   {
@@ -1685,6 +1690,23 @@ static void _blendop_masks_add_shape(GtkGestureSingle *gesture,
 
   dt_control_queue_redraw_center();
 }
+
+static void _blendop_masks_add_shape(GtkGestureSingle *gesture,
+                                      gint n_press,
+                                      gdouble x,
+                                      gdouble y,
+                                      dt_iop_module_t *self)
+{
+  _blendop_masks_create_shape(dt_gui_get_widget(gesture), self,
+                             dt_modifier_is(dt_gui_current_state(gesture), GDK_CONTROL_MASK));
+}
+
+#ifdef HAVE_AI
+static void _blendop_masks_select(GtkButton *button, dt_iop_module_t *self)
+{
+  _blendop_masks_create_shape(GTK_WIDGET(button), self, FALSE);
+}
+#endif
 
 static void _blendop_masks_show_and_edit(GtkGestureSingle *gesture,
                                              gint n_press,
@@ -2819,6 +2841,9 @@ void dt_iop_gui_init_masks(GtkWidget *blendw, dt_iop_module_t *module)
                                                   G_CALLBACK(_blendop_masks_add_shape),
                                                   FALSE, 0, 0,
                                                   dtgtk_cairo_paint_masks_object, abox);
+    GtkWidget *automatic =
+      dt_masks_object_selectors(DT_ACTION(module), N_("blend`shapes"),
+                                G_CALLBACK(_blendop_masks_select), module);
 #endif
 
     bd->masks_type[0] = DT_MASKS_GRADIENT;
@@ -2862,6 +2887,9 @@ void dt_iop_gui_init_masks(GtkWidget *blendw, dt_iop_module_t *module)
                                                   dtgtk_cairo_paint_masks_brush, abox);
 
     bd->masks_box = GTK_BOX(dt_gui_vbox(hbox, abox));
+#ifdef HAVE_AI
+    dt_gui_box_add(GTK_WIDGET(bd->masks_box), automatic);
+#endif
     _add_wrapped_box(blendw, bd->masks_box, "masks_drawn");
 
     bd->masks_inited = TRUE;

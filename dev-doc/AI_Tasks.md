@@ -20,11 +20,35 @@ Interactive object masking using SAM/SAM2/SegNext models.
 1. user selects the object mask tool in the mask manager
 2. the image is exported as sRGB uint8 and encoded by the SAM encoder
    (runs once per image, cached)
-3. user clicks to place foreground/background points
+3. user clicks to place foreground/background points, or chooses subject,
+   sky, or background for automatic point selection
 4. each click runs the lightweight decoder to produce a mask
 5. iterative refinement: previous mask is fed back to improve accuracy
 6. the mask is resized to image dimensions and applied as a darktable
    mask shape
+
+### Automatic Selection
+
+The mask manager and module masking controls offer subject, sky, and
+background buttons. These use the active object masking model without
+additional models. They generate an editable preview; clicks refine the
+selection and right-click applies it as paths.
+
+Automatic selection is heuristic, not semantic classification. The worker
+samples 25 independent points for subject/background and 10 points in the
+upper image for sky, resetting the previous mask between candidates.
+Subject ranking favors substantial, central regions with limited frame-edge
+contact. Sky ranking uses upper-edge contact, blue or bright neutral colors,
+and low texture to reject regions such as pale buildings. It can still fail
+on unusual compositions, indoor scenes, sunsets, or heavily textured skies.
+When no candidate passes, the tool leaves selection to manual clicks.
+
+Background uses the same subject search and inverts the refined mask.
+Foreground/background prompt labels are reversed during refinement so
+click and shift-click still add to and subtract from the displayed selection.
+Sky refinement retains disconnected regions, such as sky behind branches.
+Candidate inference runs on the encoding worker; readiness is published only
+after inference finishes. Closing the tool cancels remaining candidates.
 
 ### Supported Architectures
 
