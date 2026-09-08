@@ -106,6 +106,10 @@ changes (where available).
   point curves, parametric curves, and eight-band HSL adjustments are converted
   approximately; omitted settings are listed in the imported style's description.
 
+- Added automatic subject, sky, and background selection using existing
+  AI object masking models. Selection uses position and color heuristics
+  and can be refined with clicks before conversion to editable paths.
+
 - Checkboxes are now Bauhaus widgets and are reset to default values
   when e.g. a tab or a module is reset.
 

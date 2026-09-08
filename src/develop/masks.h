@@ -400,6 +400,14 @@ typedef struct dt_masks_intbuf_t
 } dt_masks_intbuf_t;
 
 
+typedef enum dt_masks_object_selection_t
+{
+  DT_MASKS_OBJECT_MANUAL = 0,
+  DT_MASKS_OBJECT_SUBJECT,
+  DT_MASKS_OBJECT_SKY,
+  DT_MASKS_OBJECT_BACKGROUND,
+} dt_masks_object_selection_t;
+
 /** structure used to display a form */
 typedef struct dt_masks_form_gui_t
 {
@@ -454,6 +462,7 @@ typedef struct dt_masks_form_gui_t
 
   guint show_all_feathers;
 
+  dt_masks_object_selection_t object_selection;
   gboolean creation;
   gboolean creation_continuous;
   gboolean creation_closing_form;
@@ -486,6 +495,13 @@ extern const dt_masks_functions_t dt_masks_functions_group;
 extern const dt_masks_functions_t dt_masks_functions_object;
 /** check if AI object mask model is downloaded and AI is enabled */
 gboolean dt_masks_object_available(void);
+/** build the subject/sky/background button row; the caller packs the
+    returned box and receives dt_masks_object_selection_t via the buttons'
+    "object-selection" data */
+GtkWidget *dt_masks_object_selectors(dt_action_t *action,
+                                     const char *section,
+                                     GCallback callback,
+                                     gpointer user_data);
 #endif
 
 /** init dt_masks_form_gui_t struct with default values */

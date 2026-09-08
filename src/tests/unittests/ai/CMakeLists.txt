@@ -17,3 +17,11 @@ if(UNIX AND NOT APPLE AND NOT ONNXRuntime_SYSTEM_PACKAGE)
 endif()
 
 set_tests_properties(test_ai_backend PROPERTIES ENVIRONMENT "${_AI_TEST_ENV}")
+
+add_cmocka_test(test_object_selection
+                SOURCES test_object_selection.c
+                LINK_LIBRARIES lib_darktable cmocka::cmocka)
+
+if(WIN32)
+  _copy_required_library(test_object_selection lib_darktable)
+endif()

@@ -689,6 +689,21 @@ static void _bt_add_shape_cb(GtkGestureSingle *gesture, int n_press, double x, d
   }
 }
 
+#ifdef HAVE_AI
+static void _automatic_select(GtkButton *button, gpointer user_data)
+{
+  if(!dt_masks_object_available())
+  {
+    dt_control_log(_("AI model is not available. Check preferences > AI"));
+    return;
+  }
+  _tree_add_shape(NULL, GINT_TO_POINTER(DT_MASKS_OBJECT));
+  darktable.develop->form_gui->object_selection = GPOINTER_TO_INT(
+    g_object_get_data(G_OBJECT(button), "object-selection"));
+  _lib_masks_inactivate_icons(darktable.develop->proxy.masks.module);
+}
+#endif
+
 static void _tree_add_exist(GtkButton *button, dt_masks_form_t *grp)
 {
   if(!grp || !(grp->type & DT_MASKS_GROUP)) return;
@@ -2394,6 +2409,12 @@ void gui_init(dt_lib_module_t *self)
   self->widget = dt_gui_vbox
     (shape_buttons,
      dt_ui_resize_wrap(d->treeview, 200, "plugins/darkroom/masks/heightview"));
+
+#ifdef HAVE_AI
+  dt_gui_box_add(self->widget,
+                 dt_masks_object_selectors(DT_ACTION(self), N_("shapes"),
+                                           G_CALLBACK(_automatic_select), NULL));
+#endif
 
   dt_gui_new_collapsible_section
     (&d->cs,
