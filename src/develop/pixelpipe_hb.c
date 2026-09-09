@@ -44,6 +44,7 @@
 #include <strings.h>
 #include <unistd.h>
 
+// initial values for pipe->average_delay, these are in ms
 #define DT_DEV_AVERAGE_DELAY_START 250
 #define DT_DEV_PREVIEW_AVERAGE_DELAY_START 50
 
@@ -68,6 +69,7 @@ static inline gboolean _is_debug_pipe(dt_dev_pixelpipe_t *pipe)
 
 // forward declarations for mask cache helpers
 static void _clear_piece_mask_caches(dt_dev_pixelpipe_iop_t *piece);
+static void _clear_piece_distortion_caches(dt_dev_pixelpipe_iop_t *piece);
 static void _free_distort_bufs(dt_dev_pixelpipe_t *pipe);
 
 typedef enum dt_pixelpipe_flow_t
@@ -204,6 +206,11 @@ void dt_print_pipe_ext(const char *title,
                vtit, dev, pname, vmod, order, roi, roo, masking, vbuf);
 }
 
+static gboolean _dev_pixelpipe_init_cached(dt_dev_pixelpipe_t *pipe,
+                                           const size_t size,
+                                           const int32_t entries,
+                                           const int32_t fraction,
+                                           const uint32_t delay);
 gboolean dt_dev_pixelpipe_init_export(dt_dev_pixelpipe_t *pipe,
                                       const int32_t width,
                                       const int32_t height,
@@ -211,7 +218,7 @@ gboolean dt_dev_pixelpipe_init_export(dt_dev_pixelpipe_t *pipe,
                                       const gboolean store_masks)
 {
   const gboolean res =
-    dt_dev_pixelpipe_init_cached(pipe, sizeof(float) * 4 * width * height, DT_PIPECACHE_MIN, 0);
+    _dev_pixelpipe_init_cached(pipe, sizeof(float) * 4 * width * height, DT_PIPECACHE_MIN, 0, 1);
   pipe->type = DT_DEV_PIXELPIPE_EXPORT;
   pipe->levels = levels;
   pipe->store_all_raster_masks = store_masks;
@@ -223,7 +230,7 @@ gboolean dt_dev_pixelpipe_init_thumbnail(dt_dev_pixelpipe_t *pipe,
                                          const int32_t height)
 {
   const gboolean res =
-    dt_dev_pixelpipe_init_cached(pipe, sizeof(float) * 4 * width * height, DT_PIPECACHE_MIN, 0);
+    _dev_pixelpipe_init_cached(pipe, sizeof(float) * 4 * width * height, DT_PIPECACHE_MIN, 0, 1);
   pipe->type = DT_DEV_PIXELPIPE_THUMBNAIL;
   return res;
 }
@@ -233,42 +240,40 @@ gboolean dt_dev_pixelpipe_init_dummy(dt_dev_pixelpipe_t *pipe,
                                      const int32_t height)
 {
   const gboolean res =
-    dt_dev_pixelpipe_init_cached(pipe, sizeof(float) * 4 * width * height, 0, 0);
+    _dev_pixelpipe_init_cached(pipe, sizeof(float) * 4 * width * height, 0, 0, DT_DEV_AVERAGE_DELAY_START);
   pipe->type = DT_DEV_PIXELPIPE_THUMBNAIL;
-  pipe->average_delay = DT_DEV_AVERAGE_DELAY_START;
   return res;
 }
 
 gboolean dt_dev_pixelpipe_init_preview(dt_dev_pixelpipe_t *pipe)
 {
   const gboolean res =
-    dt_dev_pixelpipe_init_cached(pipe, 0, darktable.pipe_cache ? 12 : DT_PIPECACHE_MIN, 32);
+    _dev_pixelpipe_init_cached(pipe, 0, darktable.pipe_cache ? 12 : DT_PIPECACHE_MIN, 32, DT_DEV_PREVIEW_AVERAGE_DELAY_START);
   pipe->type = DT_DEV_PIXELPIPE_PREVIEW;
-  pipe->average_delay = DT_DEV_PREVIEW_AVERAGE_DELAY_START;
   return res;
 }
 
 gboolean dt_dev_pixelpipe_init_preview2(dt_dev_pixelpipe_t *pipe)
 {
   const gboolean res =
-    dt_dev_pixelpipe_init_cached(pipe, 0, darktable.pipe_cache ? 5 : DT_PIPECACHE_MIN, 32);
+    _dev_pixelpipe_init_cached(pipe, 0, darktable.pipe_cache ? 5 : DT_PIPECACHE_MIN, 32, DT_DEV_AVERAGE_DELAY_START);
   pipe->type = DT_DEV_PIXELPIPE_PREVIEW2;
-  pipe->average_delay = DT_DEV_PREVIEW_AVERAGE_DELAY_START;
   return res;
 }
 
 gboolean dt_dev_pixelpipe_init(dt_dev_pixelpipe_t *pipe)
 {
   const gboolean res =
-    dt_dev_pixelpipe_init_cached(pipe, 0, darktable.pipe_cache ? 64 : DT_PIPECACHE_MIN, 8);
+    _dev_pixelpipe_init_cached(pipe, 0, darktable.pipe_cache ? 64 : DT_PIPECACHE_MIN, 8, DT_DEV_AVERAGE_DELAY_START);
   pipe->type = DT_DEV_PIXELPIPE_FULL;
   return res;
 }
 
-gboolean dt_dev_pixelpipe_init_cached(dt_dev_pixelpipe_t *pipe,
-                                      const size_t size,
-                                      const int32_t entries,
-                                      const int32_t fraction)
+static gboolean _dev_pixelpipe_init_cached(dt_dev_pixelpipe_t *pipe,
+                                           const size_t size,
+                                           const int32_t entries,
+                                           const int32_t fraction,
+                                           const uint32_t delay)
 {
   pipe->devid = DT_DEVICE_CPU;
   pipe->loading = FALSE;
@@ -293,6 +298,7 @@ gboolean dt_dev_pixelpipe_init_cached(dt_dev_pixelpipe_t *pipe,
   pipe->tiling = FALSE;
   pipe->mask_display = DT_DEV_PIXELPIPE_DISPLAY_NONE;
   pipe->bypass_blendif = FALSE;
+  pipe->average_delay = 1000 * delay;
   pipe->input_timestamp = 0;
   pipe->levels = IMAGEIO_RGB | IMAGEIO_INT8;
   dt_pthread_mutex_init(&pipe->mutex, NULL);
@@ -551,9 +557,13 @@ void dt_dev_pixelpipe_create_nodes(dt_dev_pixelpipe_t *pipe,
 }
 
 // helper
+/* `replaying` is TRUE only for the dt_dev_pixelpipe_synch_all() replay loop,
+   which defers the usedetails flush to a single invalidation once the whole
+   history has been committed */
 static void _dev_pixelpipe_synch(dt_dev_pixelpipe_t *pipe,
                                  dt_develop_t *dev,
-                                 GList *history)
+                                 GList *history,
+                                 const gboolean replaying)
 {
   dt_dev_history_item_t *hist = history->data;
   // find piece in nodes list
@@ -599,16 +609,14 @@ static void _dev_pixelpipe_synch(dt_dev_pixelpipe_t *pipe,
       if(piece->enabled != hist->enabled)
       {
         if(piece->enabled)
-          dt_iop_set_module_trouble_message
-            (piece->module,
+          dt_iop_set_module_trouble_message(piece->module,
              _("enabled as required"),
              _("history had module disabled but it is required for"
                " this type of image.\nlikely introduced by applying a preset,"
                " style or history copy&paste"),
              NULL);
         else
-          dt_iop_set_module_trouble_message
-            (piece->module,
+          dt_iop_set_module_trouble_message(piece->module,
              _("disabled as not appropriate"),
              _("history had module enabled but it is not allowed for this type"
                " of image.\nlikely introduced by applying a preset, style or"
@@ -663,8 +671,16 @@ static void _dev_pixelpipe_synch(dt_dev_pixelpipe_t *pipe,
 
         if(!feqf(bp->details, 0.0f, 1e-6) && valid_mask && pipe->want_detail_mask == FALSE)
         {
-          dt_iop_module_t *gen = raw_img ? dt_iop_get_module("demosaic") : NULL;
-          dt_dev_pixelpipe_cache_invalidate_later(pipe, gen ? gen->iop_order : 0, "usedetails ");
+          // during synch_all replay the flush is deferred to a single
+          // presence-gated invalidation at the end (see
+          // dt_dev_pixelpipe_synch_all): the scharr buffer is preserved across
+          // replay, so flushing per module here is both unnecessary and ruinous
+          // for the pipe cache
+          if(!replaying)
+          {
+            dt_iop_module_t *gen = raw_img ? dt_iop_get_module("demosaic") : NULL;
+            dt_dev_pixelpipe_cache_invalidate_later(pipe, gen ? gen->iop_order : 0, "usedetails ");
+          }
           pipe->want_detail_mask = TRUE;
         }
       }
@@ -773,13 +789,36 @@ void dt_dev_pixelpipe_synch_all(dt_dev_pixelpipe_t *pipe, dt_develop_t *dev)
   dt_print_pipe(DT_DEBUG_PARAMS, "synch all module history",
     pipe, NULL, DT_DEVICE_NONE, NULL, NULL);
 
-  dt_dev_clear_scharr_mask(pipe);
+  /* keep the scharr detail mask across history replay. Its producer (demosaic
+     or rawprepare) rewrites it precisely when it reprocesses, i.e. exactly when
+     its output, and hence the scharr, would change, and leaves it valid on a
+     cache hit. rawprepare writes it WB-independently (rawmode=FALSE, see
+     rawprepare.c) and demosaic sits downstream of temperature, so no input the
+     scharr depends on can change without its producer reprocessing.
+
+     We suppress that per-module flush during replay and settle the buffer once,
+     after the whole history has been committed (see below).
+
+     The per-piece distortion caches are still dropped every synch_all as before
+     (hash-guarded and cheap); only the scharr buffer is preserved.
+
+     The drawn-mask cache is NOT dropped here, unlike the two above. It exists
+     precisely because refilling it is expensive, and a synch_all runs before
+     essentially every interactive render -- every history change, every mask
+     edit, every overlay toggle -- so clearing it here meant it could never hit
+     in the darkroom and the memoization bought nothing. It does not need the
+     blanket clear either: its key (group hash, roi_out, mask_mode; blend.c)
+     already covers everything a replay can change about the rendered mask.
+     It is still freed with the piece and whenever the scharr is dropped. */
+  for(GList *n = pipe->nodes; n; n = g_list_next(n))
+    _clear_piece_distortion_caches(n->data);
+
   pipe->want_detail_mask = FALSE;
 
   GList *history = dev->history;
   for(int k = 0; k < dev->history_end && history; k++)
   {
-    _dev_pixelpipe_synch(pipe, dev, history);
+    _dev_pixelpipe_synch(pipe, dev, history, TRUE);
     history = g_list_next(history);
   }
 
@@ -787,6 +826,27 @@ void dt_dev_pixelpipe_synch_all(dt_dev_pixelpipe_t *pipe, dt_develop_t *dev)
   // drop any phantom users left behind by deleted or de-synced consumers
   for(GList *nodes = pipe->nodes; nodes; nodes = g_list_next(nodes))
     _iop_prune_stale_raster_users(pipe, ((dt_dev_pixelpipe_iop_t *)nodes->data)->module);
+
+  /* decide from the actual state, not from a cross-synch_all compare of
+     want_detail_mask: that flag is unreliable here, as node rebuilds reset it and
+     it can flicker mid-drag. The buffer is the ground truth, and it belongs to its
+     producer: demosaic and rawprepare clear it at the top of every process() and
+     rewrite it iff want_detail_mask, so a buffer that is still around was left
+     valid by the last producer run. All synch_all has to do is force that run when
+     the buffer is needed but missing, i.e. on the first process or after a node
+     rebuild dropped it.
+
+     When it is no longer wanted we free it right away rather than waiting for the
+     producer's next run, which may never come while it stays cached: scharr.size
+     counts towards _get_pipe_cache_mem(), so holding an unused buffer would shrink
+     the budget left for cachelines. No flush is needed for that direction, as
+     nothing cached still refers to the buffer. A mere detail-threshold change
+     needs no flush either, since it changes the mask hash and the masked module
+     invalidates on its own */
+  if(pipe->want_detail_mask && pipe->scharr.data == NULL)
+    dt_dev_pixelpipe_cache_invalidate_later(pipe, 0, "usedetails build ");
+  else if(!pipe->want_detail_mask && pipe->scharr.data != NULL)
+    dt_dev_clear_scharr_mask(pipe);
 
   dt_print_pipe(DT_DEBUG_PARAMS,
            "synch all modules done",
@@ -805,7 +865,7 @@ void dt_dev_pixelpipe_synch_top(dt_dev_pixelpipe_t *pipe, dt_develop_t *dev)
     dt_dev_history_item_t *hist = history->data;
     dt_print_pipe(DT_DEBUG_PARAMS, "synch top history module",
       pipe, hist->module, DT_DEVICE_NONE, NULL, NULL);
-    _dev_pixelpipe_synch(pipe, dev, history);
+    _dev_pixelpipe_synch(pipe, dev, history, FALSE);
   }
   else
   {
@@ -3604,8 +3664,8 @@ static inline gboolean _use_mask_cache(void)
 }
 
 // release a cached mask and account for the freed memory
-static void _clear_mask_cache(dt_dev_pixelpipe_t *pipe,
-                              dt_dev_distorted_mask_cache_t *c)
+void dt_dev_pixelpipe_clear_mask_cache(dt_dev_pixelpipe_t *pipe,
+                                       dt_dev_distorted_mask_cache_t *c)
 {
   dt_free_align(c->data);
   if(pipe)
@@ -3617,9 +3677,9 @@ static void _clear_mask_cache(dt_dev_pixelpipe_t *pipe,
    returns FALSE if we can't or don't want to cache, in that case any
    possibly available data have been released.
 */
-static gboolean _prepare_mask_cache(dt_dev_pixelpipe_iop_t *piece,
-                                    dt_dev_distorted_mask_cache_t *c,
-                                    const size_t num_floats)
+gboolean dt_dev_pixelpipe_prepare_mask_cache(dt_dev_pixelpipe_iop_t *piece,
+                                            dt_dev_distorted_mask_cache_t *c,
+                                            const size_t num_floats)
 {
   dt_dev_pixelpipe_t *pipe = piece->pipe;
   const size_t needed = num_floats * sizeof(float);
@@ -3627,13 +3687,13 @@ static gboolean _prepare_mask_cache(dt_dev_pixelpipe_iop_t *piece,
   // also releases data kept from before the user lowered the resource level
   if(!_use_mask_cache() || num_floats == 0)
   {
-    _clear_mask_cache(pipe, c);
+    dt_dev_pixelpipe_clear_mask_cache(pipe, c);
     return FALSE;
   }
 
   // realloc only if size changed
   if(c->data && c->size != needed)
-    _clear_mask_cache(pipe, c);
+    dt_dev_pixelpipe_clear_mask_cache(pipe, c);
 
   if(!c->data)
   {
@@ -3653,7 +3713,7 @@ _update_detail_mask_cache(dt_dev_pixelpipe_iop_t *piece, const float *data,
   dt_dev_distorted_mask_cache_t *c = &piece->detail_mask_cache;
   const size_t num_floats = (size_t)roi->width * roi->height;
 
-  if(_prepare_mask_cache(piece, c, num_floats))
+  if(dt_dev_pixelpipe_prepare_mask_cache(piece, c, num_floats))
   {
     dt_iop_image_copy(c->data, data, num_floats);
     c->roi = *roi;
@@ -3672,7 +3732,7 @@ static void _update_raster_mask_cache(dt_dev_pixelpipe_iop_t *piece,
   dt_dev_distorted_mask_cache_t *c = &piece->raster_mask_cache;
   const size_t num_floats = (size_t)roi->width * roi->height;
 
-  if(_prepare_mask_cache(piece, c, num_floats))
+  if(dt_dev_pixelpipe_prepare_mask_cache(piece, c, num_floats))
   {
     dt_iop_image_copy(c->data, data, num_floats);
     c->roi = *roi;
@@ -3680,10 +3740,20 @@ static void _update_raster_mask_cache(dt_dev_pixelpipe_iop_t *piece,
   }
 }
 
+// the distortion caches only: what a history replay may safely drop, because
+// refilling them is cheap. Kept apart from the drawn-mask cache, which is
+// expensive to refill and carries a key that already covers everything a
+// replay can change -- see dt_dev_pixelpipe_synch_all().
+static void _clear_piece_distortion_caches(dt_dev_pixelpipe_iop_t *piece)
+{
+  dt_dev_pixelpipe_clear_mask_cache(piece->pipe, &piece->detail_mask_cache);
+  dt_dev_pixelpipe_clear_mask_cache(piece->pipe, &piece->raster_mask_cache);
+}
+
 static void _clear_piece_mask_caches(dt_dev_pixelpipe_iop_t *piece)
 {
-  _clear_mask_cache(piece->pipe, &piece->detail_mask_cache);
-  _clear_mask_cache(piece->pipe, &piece->raster_mask_cache);
+  _clear_piece_distortion_caches(piece);
+  dt_dev_pixelpipe_clear_mask_cache(piece->pipe, &piece->drawn_mask_cache);
 }
 
 static inline gboolean _distort_piece_roi(const dt_dev_pixelpipe_iop_t *piece)

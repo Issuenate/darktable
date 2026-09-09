@@ -250,6 +250,7 @@ dt_essentials_export_result_t dt_essentials_export_dialog(void)
     if(fmt && storage)
     {
       g_autofree char *style = dt_conf_get_string(EXPORT_PREFIX "style");
+      g_autofree char *metadata_export = dt_lib_export_metadata_get_conf();
       dt_control_export(images,
                         max_edge, max_edge,
                         dt_imageio_get_index_of_format(fmt),
@@ -262,7 +263,7 @@ dt_essentials_export_result_t dt_essentials_export_dialog(void)
                         style ? style : "",
                         dt_conf_get_bool(EXPORT_PREFIX "style_append"),
                         DT_COLORSPACE_SRGB, "", DT_INTENT_PERCEPTUAL,
-                        NULL);
+                        metadata_export);
       images = NULL;  /* dt_control_export() takes the list */
       result = DT_ESSENTIALS_EXPORT_QUEUED;
       dt_toast_log(ngettext("exporting %u photo to %s",

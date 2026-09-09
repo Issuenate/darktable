@@ -43,6 +43,18 @@ typedef struct dt_dev_distorted_mask_cache_t
   dt_hash_t src_hash; // hash of source data (e.g. threshold) for invalidation
 } dt_dev_distorted_mask_cache_t;
 
+/** make sure a mask cacheline can hold num_floats, reallocating as required,
+ *  and account the memory in pipe->mask_cache_size. Returns FALSE if we can't
+ *  or don't want to cache (low memory), having released any data it held.
+ *  Every mask cacheline must be filled through this and released through
+ *  dt_dev_pixelpipe_clear_mask_cache(), or its memory escapes the pipe's cache
+ *  budget and the low-memory opt-out. */
+gboolean dt_dev_pixelpipe_prepare_mask_cache(struct dt_dev_pixelpipe_iop_t *piece,
+                                             dt_dev_distorted_mask_cache_t *c,
+                                             const size_t num_floats);
+void dt_dev_pixelpipe_clear_mask_cache(struct dt_dev_pixelpipe_t *pipe,
+                                       dt_dev_distorted_mask_cache_t *c);
+
 typedef struct dt_dev_pixelpipe_iop_t
 {
   struct dt_iop_module_t *module;  // the module in the dev operation stack
@@ -79,6 +91,7 @@ typedef struct dt_dev_pixelpipe_iop_t
   // cached distorted masks at geometric module boundaries
   dt_dev_distorted_mask_cache_t detail_mask_cache;
   dt_dev_distorted_mask_cache_t raster_mask_cache;
+  dt_dev_distorted_mask_cache_t drawn_mask_cache;
 } dt_dev_pixelpipe_iop_t;
 
 typedef enum dt_dev_pixelpipe_change_t
@@ -242,7 +255,7 @@ typedef struct dt_dev_pixelpipe_t
   gboolean bypass_blendif;
   // input data based on this timestamp:
   int input_timestamp;
-  uint32_t average_delay;
+  gint64 average_delay;
   dt_dev_pixelpipe_type_t type;
   // the final output pixel format this pixelpipe will be converted to
   dt_imageio_levels_t levels;
@@ -272,6 +285,7 @@ typedef struct dt_dev_pixelpipe_t
   size_t mask_distort_buf_size[2];
   // sum of all per-piece detail/raster mask caches currently allocated in this pipe
   size_t mask_cache_size;
+  gint64 started_time; // monotonic timestamp (in microseconds) when the pipe started
 } dt_dev_pixelpipe_t;
 
 struct dt_develop_t;
@@ -370,12 +384,6 @@ gboolean dt_dev_pixelpipe_init_thumbnail(dt_dev_pixelpipe_t *pipe,
 gboolean dt_dev_pixelpipe_init_dummy(dt_dev_pixelpipe_t *pipe,
                                      const int32_t width,
                                      const int32_t height);
-// inits the pixelpipe with given cacheline size and number of
-// entries. returns TRUE in case of success
-gboolean dt_dev_pixelpipe_init_cached(dt_dev_pixelpipe_t *pipe,
-                                      const size_t size,
-                                      const int32_t entries,
-                                      const int32_t fraction);
 // returns available memory for the pipe
 size_t dt_get_available_pipe_mem(const dt_dev_pixelpipe_t *pipe);
 // constructs a new input buffer from given RGB float array.

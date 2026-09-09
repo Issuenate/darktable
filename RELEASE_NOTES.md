@@ -79,9 +79,6 @@ changes (where available).
   by fixed offsets, so a stack stays valid across module versions, and
   renders run on a throwaway duplicate so the source image is never
   modified.
-  
-
-
 
 - A guided "essentials" interface for people new to raw processing.
   It presents darktable as three steps - add photos, choose, edit &
@@ -156,6 +153,11 @@ changes (where available).
 - Don't invalidate the pixelpipe cache on every commit
   when a raster mask is used.
 
+- Sped up editing an image that uses a detail mask. Every history change
+  used to discard the cached output of every module from demosaic onwards,
+  so adjusting a mask or toggling the mask overlay recomputed most of the
+  pipeline each time.
+
 ## Other Changes
 
 - Added a new collection filter for the original image dimensions.
@@ -193,6 +195,11 @@ changes (where available).
 
 - pixelpipe dump files requested via cli switches are now written
   in ppm or pgm format.
+
+- The aspect ratio chosen on the camera is now applied as a crop when
+  the raw was left uncropped, so a frame shot at 1:1 or 16:9 opens
+  framed as intended while the full sensor area stays available to
+  reframe within. Read from Canon and Olympus raws.
 
 ## Bug Fixes
 
@@ -283,6 +290,28 @@ changes (where available).
 
 - Fixed wrong output or a crash from an export pattern containing an
   unclosed variable substitution, such as "$(FILE_NAME/foo".
+
+- Fixed corrupted output or a crash when an AI model returns more data
+  than darktable reserved for it, affecting object masks and Lua models.
+
+- Fixed snapshots being applied onto the original image instead of the
+  current image.
+
+- Fixed a crash when importing a style whose module order is empty. The
+  malformed order is now ignored and the style keeps the default one.
+
+- Fixed automatic exposure rendering a black image when its raw histogram
+  was unavailable, and black-point limits ignoring camera exposure
+  compensation, which could invert the tonal range.
+
+- Fixed exposure's area mapping blowing out the image when its target
+  lightness was set to zero. Such a target cannot be reached, so the
+  correction is now left alone instead.
+
+- Fixed a possible crash when loading an image edited with a newer
+  version of Darktable. This scenario is not supported but we should
+  not crash. The offending modules are now reset to use the default
+  parameters and a message is displayed to the user.
 
 ## Lua
 
