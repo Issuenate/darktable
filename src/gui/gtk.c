@@ -494,10 +494,17 @@ static void _borders_button_pressed(GtkGestureSingle *gesture,
 
 // FIXME: if this is only called from scroll handlers, move this logic to scroll proxy
 // FIXME: just call with GdkModifierType as state
+/* Essentials scrolls the side panel under the pointer without a modifier;
+ * Advanced keeps whatever the user set. */
+static gboolean _sidebar_scrolls_by_default(void)
+{
+  return dt_essentials_mode_is_active()
+         || dt_conf_get_bool("darkroom/ui/sidebar_scroll_default");
+}
+
 static gboolean _dt_gui_ignore_scroll(const GdkModifierType mods_pressed)
 {
-  const gboolean ignore_without_mods =
-    dt_conf_get_bool("darkroom/ui/sidebar_scroll_default");
+  const gboolean ignore_without_mods = _sidebar_scrolls_by_default();
 
   if(mods_pressed == 0)
     return ignore_without_mods;
@@ -3054,7 +3061,7 @@ static gboolean _ui_init_panel_container_center_scroll_event(GtkWidget *widget,
   // just make sure nothing happens unless ctrl-alt are pressed:
   return (((dt_gdk_event_get_state(event) & gtk_accelerator_get_default_mod_mask())
            != darktable.gui->sidebar_scroll_mask)
-          != dt_conf_get_bool("darkroom/ui/sidebar_scroll_default"));
+          != _sidebar_scrolls_by_default());
   // GTK4: return GDK_EVENT_PROPAGATE/GDK_EVENT_STOP
 }
 
@@ -3189,7 +3196,7 @@ static gboolean _panel_center_scroll(GtkEventControllerScroll *controller,
     dt_gui_get_current_event_state(GTK_EVENT_CONTROLLER(controller))
     & gtk_accelerator_get_default_mod_mask();
   return ((mods != darktable.gui->sidebar_scroll_mask)
-          != dt_conf_get_bool("darkroom/ui/sidebar_scroll_default"))
+          != _sidebar_scrolls_by_default())
     ? GDK_EVENT_STOP : GDK_EVENT_PROPAGATE;
 }
 
@@ -3207,7 +3214,7 @@ static gboolean _borders_scrolled_controller(GtkEventControllerScroll *controlle
     dt_gui_get_current_event_state(GTK_EVENT_CONTROLLER(controller))
     & gtk_accelerator_get_default_mod_mask();
   if(((mods != darktable.gui->sidebar_scroll_mask)
-      != dt_conf_get_bool("darkroom/ui/sidebar_scroll_default")))
+      != _sidebar_scrolls_by_default()))
     return GDK_EVENT_STOP;   // gated away, same as the GTK3 consume
 
   GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(sw));
@@ -4008,6 +4015,7 @@ gboolean dt_gui_show_yes_no_dialog(const char *title,
                          NULL);
   gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_NO);
   gtk_window_set_title(GTK_WINDOW(dialog), title);
+  dt_gui_dialog_apply_experience(dialog);
 
 #ifdef GDK_WINDOWING_QUARTZ
     dt_osx_disallow_fullscreen(dialog);
@@ -4048,6 +4056,19 @@ char *dt_gui_get_help_url(GtkWidget *widget)
   }
 
   return "/";	// default to top level of manual
+}
+
+void dt_gui_dialog_apply_experience(GtkWidget *dialog)
+{
+  if(!dialog || !dt_essentials_mode_is_active()) return;
+  dt_gui_add_class(dialog, "essentials-ui");
+
+  /* GTK3 has no :default pseudo-class, so mark the default response for the
+   * theme: without it cancel and accept carry identical weight and there is
+   * nothing to tell the user which one is the way forward. Call this after
+   * gtk_dialog_set_default_response(). */
+  GtkWidget *primary = gtk_window_get_default_widget(GTK_WINDOW(dialog));
+  if(primary) dt_gui_add_class(primary, "suggested-action");
 }
 
 void dt_gui_dialog_add_help(GtkDialog *dialog,
@@ -4325,6 +4346,12 @@ void dt_gui_apply_theme()
     GdkRGBA default_col;
   } init[DT_GUI_COLOR_LAST]
       = { [DT_GUI_COLOR_DARKROOM_BG] = { "darkroom_bg_color", { .2, .2, .2, 1.0 } },
+          [DT_GUI_COLOR_ESSENTIALS_SURROUND_CHARCOAL] =
+            { "essentials_surround_charcoal", { .137, .137, .137, 1.0 } },
+          [DT_GUI_COLOR_ESSENTIALS_SURROUND_GRAPHITE] =
+            { "essentials_surround_graphite", { .188, .188, .188, 1.0 } },
+          [DT_GUI_COLOR_ESSENTIALS_SURROUND_SLATE] =
+            { "essentials_surround_slate", { .239, .239, .239, 1.0 } },
           [DT_GUI_COLOR_DARKROOM_PREVIEW_BG] = { "darkroom_preview_bg_color", { .1, .1, .1, 1.0 } },
           [DT_GUI_COLOR_LIGHTTABLE_BG] = { "lighttable_bg_color", { .2, .2, .2, 1.0 } },
           [DT_GUI_COLOR_LIGHTTABLE_PREVIEW_BG] = { "lighttable_preview_bg_color", { .1, .1, .1, 1.0 } },
@@ -4373,6 +4400,41 @@ void dt_gui_apply_theme()
       c[i] = init[i].default_col;
     }
   }
+}
+
+gboolean dt_essentials_mode_is_active(void)
+{
+  const char *configured = dt_conf_get_string_const("ui/experience_mode");
+  if(!g_strcmp0(configured, "auto"))
+  {
+    const gboolean first_run = dt_conf_get_bool("ui/show_welcome_screen");
+    dt_conf_set_string("ui/experience_mode",
+                       first_run ? "essentials" : "advanced");
+    return first_run;
+  }
+  return !g_strcmp0(configured, "essentials");
+}
+
+/*
+ * darkroom_bg_color is middle gray on purpose: a neutral surround is what lets
+ * you judge an image's tones honestly, and the theme comment says so. Essentials
+ * darkens it to sit with its own panels, but keeps it strictly achromatic --
+ * the panel color is slightly blue, and a tinted surround is the part that
+ * would actually bias color judgement.
+ */
+dt_gui_color_t dt_gui_image_surround_color(const dt_gui_color_t advanced)
+{
+  if(!dt_essentials_mode_is_active()) return advanced;
+
+  const char *choice = dt_conf_get_string_const("ui/essentials_surround");
+  if(!g_strcmp0(choice, "charcoal"))
+    return DT_GUI_COLOR_ESSENTIALS_SURROUND_CHARCOAL;
+  if(!g_strcmp0(choice, "slate"))
+    return DT_GUI_COLOR_ESSENTIALS_SURROUND_SLATE;
+  /* "neutral" keeps darktable's own middle grey, for critical color work */
+  if(!g_strcmp0(choice, "neutral"))
+    return advanced;
+  return DT_GUI_COLOR_ESSENTIALS_SURROUND_GRAPHITE;
 }
 
 GdkModifierType dt_key_modifier_state()

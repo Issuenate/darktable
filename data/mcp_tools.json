@@ -1,5 +1,30 @@
 [
   {
+    "name": "capabilities_search",
+    "description": "Find stable, user-goal capabilities by natural-language phrase. This is deterministic and read-only; it never changes a photo or catalog.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string", "description": "phrase such as 'make brighter' or 'export for Instagram'" },
+        "context": { "enum": ["global", "library", "edit", "export"] },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 32, "default": 8 }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "capabilities_describe",
+    "description": "Describe one stable capability, including typed arguments, safety policy, navigation target, and agent exposure. This is read-only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "stable capability id, for example library.add_photos" }
+      },
+      "required": ["id"],
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "list_modules",
     "description": "List all darktable processing modules with their current param version and whether they expose introspection.",
     "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }

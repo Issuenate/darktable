@@ -18,6 +18,8 @@
 
 #include "common/styles.h"
 #include "common/collection.h"
+#include "common/colorspaces_inline_conversions.h"
+#include "common/curve_tools.h"
 #include "common/darktable.h"
 #include "common/debug.h"
 #include "common/exif.h"
@@ -36,9 +38,12 @@
 #include <libxml/encoding.h>
 #include <libxml/parser.h>
 #include <libxml/xmlwriter.h>
+#include <libxml/xpath.h>
+#include <libxml/xpathInternals.h>
 
 #include <dirent.h>
 #include <glib.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -1432,6 +1437,466 @@ static void dt_styles_style_data_free(StyleData *style, gboolean free_segments)
   g_free(style);
 }
 
+static gboolean _is_lightroom_preset(const char *filename)
+{
+  const char *extension = strrchr(filename, '.');
+  return extension && !g_ascii_strcasecmp(extension, ".xmp");
+}
+
+static gboolean _lightroom_set_param(dt_iop_module_t *module, const char *name, const double value)
+{
+  const dt_introspection_field_t *field = module->so->get_f(name);
+  void *param = module->so->get_p(module->params, name);
+  if(!field || !param || !isfinite(value)) return FALSE;
+
+  switch(field->header.type)
+  {
+    case DT_INTROSPECTION_TYPE_FLOAT:
+      if(value < field->Float.Min || value > field->Float.Max) return FALSE;
+      *(float *)param = value;
+      return TRUE;
+    case DT_INTROSPECTION_TYPE_BOOL:
+      *(gboolean *)param = value != 0;
+      return TRUE;
+    case DT_INTROSPECTION_TYPE_ENUM:
+      *(int *)param = value;
+      return TRUE;
+    default:
+      return FALSE;
+  }
+}
+
+static gboolean _lightroom_add_module(StyleData *style, dt_iop_module_t *module,
+                                      const int priority, const char *name)
+{
+  char *params = dt_exif_xmp_encode(module->params, module->params_size, NULL);
+  char *blend = dt_exif_xmp_encode((unsigned char *)module->default_blendop_params,
+                                 sizeof(dt_develop_blend_params_t), NULL);
+  const gboolean valid = params && blend;
+  if(valid)
+  {
+    StylePluginData *plugin = dt_styles_style_plugin_new();
+    plugin->num = g_list_length(style->plugins);
+    plugin->module = module->version();
+    plugin->enabled = TRUE;
+    plugin->blendop_version = DEVELOP_BLEND_VERSION;
+    plugin->multi_priority = priority;
+    plugin->multi_name_hand_edited = name && *name;
+    g_string_assign(plugin->operation, module->op);
+    g_string_assign(plugin->multi_name, name ? name : "");
+    g_string_assign(plugin->op_params, params);
+    g_string_assign(plugin->blendop_params, blend);
+    style->plugins = g_list_append(style->plugins, plugin);
+  }
+  g_free(params);
+  g_free(blend);
+  return valid;
+}
+
+static gboolean _lightroom_number(const char *text, const double min,
+                                  const double max, double *value)
+{
+  if(!text) return FALSE;
+  char *end = NULL;
+  *value = g_ascii_strtod(text, &end);
+  if(end == text) return FALSE;
+  while(g_ascii_isspace(*end)) end++;
+  return !*end && isfinite(*value) && *value >= min && *value <= max;
+}
+
+static gboolean _lightroom_set_curve(dt_iop_module_t *module, const char *name,
+                                     const int channel, const float points[][2], const int count)
+{
+  dt_introspection_field_t *field = module->so->get_f(name);
+  void *curve = dt_introspection_access_array(field, module->so->get_p(module->params, name),
+                                             channel, &field);
+  if(!curve || field->header.type != DT_INTROSPECTION_TYPE_ARRAY
+     || count < 2 || count > field->Array.count) return FALSE;
+  for(int i = 0; i < count; i++)
+  {
+    if(!isfinite(points[i][0]) || !isfinite(points[i][1])
+       || points[i][0] < 0 || points[i][0] > 1 || points[i][1] < 0 || points[i][1] > 1
+       || (i && points[i][0] <= points[i - 1][0])) return FALSE;
+    dt_introspection_field_t *node_field = NULL, *scalar = NULL;
+    void *node = dt_introspection_access_array(field, curve, i, &node_field);
+    float *x = dt_introspection_get_child(node_field, node, "x", &scalar);
+    if(!x || scalar->header.type != DT_INTROSPECTION_TYPE_FLOAT) return FALSE;
+    float *y = dt_introspection_get_child(node_field, node, "y", &scalar);
+    if(!y || scalar->header.type != DT_INTROSPECTION_TYPE_FLOAT) return FALSE;
+    *x = points[i][0];
+    *y = points[i][1];
+  }
+  field = module->so->get_f("curve_num_nodes");
+  int *num = dt_introspection_access_array(field, module->so->get_p(module->params, "curve_num_nodes"),
+                                          channel, &field);
+  if(!num || field->header.type != DT_INTROSPECTION_TYPE_INT) return FALSE;
+  *num = count;
+  field = module->so->get_f("curve_type");
+  int *type = dt_introspection_access_array(field, module->so->get_p(module->params, "curve_type"),
+                                           channel, &field);
+  if(!type || field->header.type != DT_INTROSPECTION_TYPE_INT) return FALSE;
+  *type = MONOTONE_HERMITE;
+  return TRUE;
+}
+
+static gboolean _lightroom_read_curve(xmlNode *node, float points[][2], int *count)
+{
+  static const char *rdf = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
+  if(!node) return FALSE;
+  xmlNode *seq = xmlFirstElementChild(node);
+  if(!seq || xmlNextElementSibling(seq) || !seq->ns || xmlStrcmp(seq->ns->href, BAD_CAST rdf)
+     || xmlStrcmp(seq->name, BAD_CAST "Seq")) return FALSE;
+  *count = 0;
+  for(xmlNode *li = xmlFirstElementChild(seq); li; li = xmlNextElementSibling(li))
+  {
+    if(*count == MAX_ANCHORS || !li->ns || xmlStrcmp(li->ns->href, BAD_CAST rdf)
+       || xmlStrcmp(li->name, BAD_CAST "li") || xmlFirstElementChild(li)) return FALSE;
+    xmlChar *text = xmlNodeGetContent(li);
+    gchar **pair = g_strsplit(text ? (char *)text : "", ",", -1);
+    double x, y;
+    const gboolean valid = g_strv_length(pair) == 2
+      && _lightroom_number(pair[0], 0, 255, &x) && _lightroom_number(pair[1], 0, 255, &y);
+    g_strfreev(pair);
+    xmlFree(text);
+    if(!valid) return FALSE;
+    points[*count][0] = x / 255;
+    points[*count][1] = y / 255;
+    if(*count && points[*count][0] <= points[*count - 1][0]) return FALSE;
+    (*count)++;
+  }
+  return *count >= 2 && points[0][0] == 0 && points[*count - 1][0] == 1;
+}
+
+static gboolean _lightroom_tonecurves(StyleData *style, GHashTable *properties,
+                                      GHashTable *elements, GHashTable *converted)
+{
+  static const char *keys[][2] = {
+    { "ToneCurvePV2012", "ToneCurve" }, { "ToneCurvePV2012Red", "ToneCurveRed" },
+    { "ToneCurvePV2012Green", "ToneCurveGreen" }, { "ToneCurvePV2012Blue", "ToneCurveBlue" }
+  };
+  float points[5][MAX_ANCHORS][2];
+  int counts[5] = { 0 };
+  for(int i = 0; i < 4; i++)
+  {
+    const char *key = g_hash_table_contains(properties, keys[i][0]) ? keys[i][0] : keys[i][1];
+    if(!g_hash_table_contains(properties, key)) continue;
+    if(!_lightroom_read_curve(g_hash_table_lookup(elements, key), points[i], &counts[i])) return FALSE;
+    g_hash_table_add(converted, g_strdup(key));
+  }
+  static const char *parametric[] = {
+    "ParametricShadows", "ParametricDarks", "ParametricLights", "ParametricHighlights",
+    "ParametricShadowSplit", "ParametricMidtoneSplit", "ParametricHighlightSplit"
+  };
+  double values[] = { 0, 0, 0, 0, 25, 50, 75 };
+  gboolean has_parametric = FALSE;
+  for(int i = 0; i < 7; i++)
+    if(g_hash_table_contains(properties, parametric[i]))
+    {
+      if(!_lightroom_number(g_hash_table_lookup(properties, parametric[i]),
+                            i < 4 ? -100 : 0, 100, &values[i])) return FALSE;
+      if(i < 4) has_parametric = TRUE;
+    }
+  if(has_parametric)
+  {
+    if(values[4] <= 0 || values[4] >= values[5] || values[5] >= values[6] || values[6] >= 100)
+      return FALSE;
+    const double boundaries[] = { 0, values[4] / 100, values[5] / 100, values[6] / 100, 1 };
+    points[4][0][0] = points[4][0][1] = 0;
+    points[4][5][0] = points[4][5][1] = 1;
+    // approximate the four regions using the sidecar importer's midpoint model (develop/lightroom.c:1494)
+    for(int i = 0; i < 4; i++)
+    {
+      const float x = (boundaries[i] + boundaries[i + 1]) / 2;
+      points[4][i + 1][0] = x;
+      points[4][i + 1][1] = CLAMP(x * (1 + values[i] / 100), points[4][i][1], 1);
+    }
+    counts[4] = 6;
+    for(int i = 0; i < 7; i++) g_hash_table_add(converted, g_strdup(parametric[i]));
+  }
+  // the composite and channel curves must remain separate so both edits survive import
+  int priority = 0;
+  for(int pass = 0; pass < 3; pass++)
+  {
+    if(pass == 0 ? !counts[4] : pass == 1 ? !counts[0] : !(counts[1] || counts[2] || counts[3])) continue;
+    dt_iop_module_so_t *so = dt_iop_get_module_so("rgbcurve");
+    if(!so || !so->have_introspection) return FALSE;
+    dt_iop_module_t module = { 0 };
+    gboolean valid = !dt_iop_load_module_by_so(&module, so, NULL);
+    if(valid)
+    {
+      memcpy(module.params, module.default_params, module.params_size);
+      valid = _lightroom_set_param(&module, "curve_autoscale", 1)
+        && _lightroom_set_param(&module, "preserve_colors", 0)
+        && _lightroom_set_param(&module, "compensate_middle_grey", FALSE);
+      for(int ch = 0; valid && ch < 3; ch++)
+      {
+        const int curve = pass == 0 ? 4 : pass == 1 ? 0 : ch + 1;
+        if(counts[curve])
+          valid = _lightroom_set_curve(&module, "curve_nodes", ch, points[curve], counts[curve]);
+      }
+      if(valid)
+        valid = _lightroom_add_module(style, &module, priority++,
+                                      pass == 0 ? _("lightroom parametric")
+                                      : pass == 1 ? _("lightroom composite") : _("lightroom channels"));
+    }
+    dt_iop_cleanup_module(&module);
+    if(!valid) return FALSE;
+  }
+  if(counts[0])
+  {
+    g_hash_table_add(converted, g_strdup("ToneCurveName2012"));
+    g_hash_table_add(converted, g_strdup("ToneCurveName"));
+  }
+  return TRUE;
+}
+
+static gboolean _lightroom_hsl(StyleData *style, GHashTable *properties, GHashTable *converted)
+{
+  static const char *colors[] = { "Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Magenta" };
+  static const dt_aligned_pixel_t rgb[] = {
+    { 1, 0, 0 }, { 1, 0.5, 0 }, { 1, 1, 0 }, { 0, 1, 0 },
+    { 0, 1, 1 }, { 0, 0, 1 }, { 0.5, 0, 1 }, { 1, 0, 1 }
+  };
+  static const char *adjustments[] = { "LuminanceAdjustment", "SaturationAdjustment", "HueAdjustment" };
+  const float factors[] = { 4.0 / 9.0, 1, 3.0 / 9.0 };
+  float points[3][8][2];
+  gboolean present = FALSE;
+  for(int color = 0; color < 8; color++)
+  {
+    dt_aligned_pixel_t xyz, lab;
+    dt_sRGB_to_XYZ(rgb[color], xyz);
+    dt_XYZ_to_Lab(xyz, lab);
+    // color zones selects by Lab hue, not by the evenly spaced RGB hue wheel
+    const float hue = fmodf(atan2f(lab[2], lab[1]) + DT_2PI_F, DT_2PI_F) / DT_2PI_F;
+    for(int ch = 0; ch < 3; ch++)
+    {
+      char key[64];
+      snprintf(key, sizeof(key), "%s%s", adjustments[ch], colors[color]);
+      double value = 0;
+      if(g_hash_table_contains(properties, key))
+      {
+        if(!_lightroom_number(g_hash_table_lookup(properties, key), -100, 100, &value)) return FALSE;
+        present = TRUE;
+        g_hash_table_add(converted, g_strdup(key));
+      }
+      points[ch][color][0] = hue;
+      points[ch][color][1] = 0.5 + factors[ch] * value / 200;
+    }
+  }
+  if(!present) return TRUE;
+  dt_iop_module_so_t *so = dt_iop_get_module_so("colorzones");
+  if(!so || !so->have_introspection) return FALSE;
+  dt_iop_module_t module = { 0 };
+  gboolean valid = !dt_iop_load_module_by_so(&module, so, NULL);
+  if(valid)
+  {
+    memcpy(module.params, module.default_params, module.params_size);
+    for(int ch = 0; valid && ch < 3; ch++)
+      valid = _lightroom_set_curve(&module, "curve", ch, points[ch], 8);
+    if(valid) valid = _lightroom_add_module(style, &module, 0, "");
+  }
+  dt_iop_cleanup_module(&module);
+  return valid;
+}
+
+static StyleData *_lightroom_style_read(const char *filename)
+{
+  static const char *crs = "http://ns.adobe.com/camera-raw-settings/1.0/";
+  static const char *rdf = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
+  static const struct
+  {
+    const char *key, *operation, *param;
+    double min, max, scale, offset;
+  } mappings[] = {
+    { "Exposure2012", "exposure", "exposure", -5, 5, 1, 0 },
+    { "GrainAmount", "grain", "strength", 0, 100, 0.8, 0 },
+    { "GrainFrequency", "grain", "scale", 0, 100, 0, 0 },
+    { "SplitToningShadowHue", "splittoning", "shadow_hue", 0, 360, 1.0 / 360, 0 },
+    { "SplitToningShadowSaturation", "splittoning", "shadow_saturation", 0, 100, 0.01, 0 },
+    { "SplitToningHighlightHue", "splittoning", "highlight_hue", 0, 360, 1.0 / 360, 0 },
+    { "SplitToningHighlightSaturation", "splittoning", "highlight_saturation", 0, 100, 0.01, 0 },
+    { "SplitToningBalance", "splittoning", "balance", -100, 100, 0.005, 0.5 },
+    { "Clarity2012", "bilat", "detail", -100, 100, 0.0065, 0 },
+    { "PostCropVignetteAmount", "vignette", "brightness", -100, 100, 0.01, 0 },
+    { "PostCropVignetteMidpoint", "vignette", "scale", 0, 100, 0, 0 },
+    { "PostCropVignetteFeather", "vignette", "falloff_scale", 0, 100, 1, 0 }
+  };
+  static const struct
+  {
+    const char *operation, *trigger, *alternate;
+  } groups[] = {
+    { "exposure", "Exposure2012", NULL },
+    { "grain", "GrainAmount", NULL },
+    { "splittoning", "SplitToningShadowSaturation", "SplitToningHighlightSaturation" },
+    { "bilat", "Clarity2012", NULL },
+    { "vignette", "PostCropVignetteAmount", NULL }
+  };
+
+  StyleData *style = NULL;
+  xmlDoc *doc = xmlReadFile(filename, NULL, XML_PARSE_NONET | XML_PARSE_NOBLANKS);
+  xmlXPathContext *context = NULL;
+  xmlXPathObject *object = NULL;
+  GHashTable *properties = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+  GHashTable *converted = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  GHashTable *elements = g_hash_table_new(g_str_hash, g_str_equal);
+  if(!doc || doc->intSubset || doc->extSubset) goto error;
+  context = xmlXPathNewContext(doc);
+  if(!context) goto error;
+  xmlXPathRegisterNs(context, BAD_CAST "x", BAD_CAST "adobe:ns:meta/");
+  xmlXPathRegisterNs(context, BAD_CAST "rdf", BAD_CAST rdf);
+  object = xmlXPathEvalExpression
+    (BAD_CAST "/x:xmpmeta/rdf:RDF/rdf:Description | /rdf:RDF/rdf:Description", context);
+  if(!object || !object->nodesetval || object->nodesetval->nodeNr != 1) goto error;
+  xmlNode *description = object->nodesetval->nodeTab[0];
+
+  // only read top-level settings: embedded looks and masks have their own parameters
+  for(xmlAttr *attr = description->properties; attr; attr = attr->next)
+  {
+    if(!attr->ns || xmlStrcmp(attr->ns->href, BAD_CAST crs)) continue;
+    xmlChar *value = xmlNodeListGetString(doc, attr->children, 1);
+    g_hash_table_insert(properties, g_strdup((char *)attr->name), g_strdup((char *)value));
+    xmlFree(value);
+  }
+  for(xmlNode *node = description->children; node; node = node->next)
+  {
+    if(node->type != XML_ELEMENT_NODE || !node->ns || xmlStrcmp(node->ns->href, BAD_CAST crs))
+      continue;
+    if(g_hash_table_contains(properties, node->name)) goto error;
+    g_hash_table_insert(elements, (gpointer)node->name, node);
+    xmlNode *content = node;
+    if(!xmlStrcmp(node->name, BAD_CAST "Name"))
+    {
+      for(xmlNode *alt = node->children; alt; alt = alt->next)
+        if(alt->type == XML_ELEMENT_NODE && alt->ns
+           && !xmlStrcmp(alt->ns->href, BAD_CAST rdf) && !xmlStrcmp(alt->name, BAD_CAST "Alt"))
+        {
+          content = NULL;
+          for(xmlNode *li = alt->children; li; li = li->next)
+          {
+            if(li->type != XML_ELEMENT_NODE || !li->ns
+               || xmlStrcmp(li->ns->href, BAD_CAST rdf) || xmlStrcmp(li->name, BAD_CAST "li")) continue;
+            if(!content) content = li;
+            xmlChar *lang = xmlNodeGetLang(li);
+            const gboolean preferred = lang && !xmlStrcmp(lang, BAD_CAST "x-default");
+            xmlFree(lang);
+            if(preferred)
+            {
+              content = li;
+              break;
+            }
+          }
+          break;
+        }
+    }
+    // structured properties are handled separately; never flatten them into scalar settings
+    xmlChar *value = content && !xmlFirstElementChild(content) ? xmlNodeGetContent(content) : NULL;
+    g_hash_table_insert(properties, g_strdup((char *)node->name), g_strdup((char *)value));
+    xmlFree(value);
+  }
+
+  // profiles and image sidecars are not reusable develop presets
+  if(g_strcmp0(g_hash_table_lookup(properties, "PresetType"), "Normal")) goto error;
+  style = dt_styles_style_data_new();
+  const char *name = g_hash_table_lookup(properties, "Name");
+  gchar *fallback = g_path_get_basename(filename);
+  *strrchr(fallback, '.') = '\0';
+  g_string_assign(style->info->name, name && *name ? name : fallback);
+  g_strstrip(style->info->name->str);
+  g_string_set_size(style->info->name, strlen(style->info->name->str));
+  g_free(fallback);
+  if(!style->info->name->len) goto error;
+  g_string_assign(style->info->description, _("approximate Lightroom preset conversion"));
+
+  for(size_t i = 0; i < G_N_ELEMENTS(groups); i++)
+  {
+    if(!g_hash_table_contains(properties, groups[i].trigger)
+       && (!groups[i].alternate || !g_hash_table_contains(properties, groups[i].alternate))) continue;
+    dt_iop_module_so_t *so = dt_iop_get_module_so(groups[i].operation);
+    if(!so || !so->have_introspection || !so->get_f || !so->get_p) goto error;
+    dt_iop_module_t module = { 0 };
+    gboolean valid = !dt_iop_load_module_by_so(&module, so, NULL);
+    if(valid)
+    {
+      memcpy(module.params, module.default_params, module.params_size);
+      if(!strcmp(so->op, "exposure"))
+        valid = _lightroom_set_param(&module, "compensate_exposure_bias", FALSE)
+          && _lightroom_set_param(&module, "compensate_hilite_pres", FALSE);
+      else if(!strcmp(so->op, "grain"))
+        valid = _lightroom_set_param(&module, "scale", 100.0 / 53.3);
+      else if(!strcmp(so->op, "splittoning"))
+        valid = _lightroom_set_param(&module, "shadow_saturation", 0)
+          && _lightroom_set_param(&module, "highlight_saturation", 0)
+          && _lightroom_set_param(&module, "highlight_hue", 0)
+          && _lightroom_set_param(&module, "compress", 50);
+      else if(!strcmp(so->op, "bilat"))
+        valid = _lightroom_set_param(&module, "mode", 0)
+          && _lightroom_set_param(&module, "sigma_r", 100)
+          && _lightroom_set_param(&module, "sigma_s", 100);
+      else if(!strcmp(so->op, "vignette"))
+        valid = _lightroom_set_param(&module, "saturation", 0)
+          && _lightroom_set_param(&module, "scale", 100)
+          && _lightroom_set_param(&module, "autoratio", TRUE);
+    }
+    for(size_t j = 0; valid && j < G_N_ELEMENTS(mappings); j++)
+    {
+      if(strcmp(mappings[j].operation, so->op)) continue;
+      if(!g_hash_table_contains(properties, mappings[j].key)) continue;
+      const char *text = g_hash_table_lookup(properties, mappings[j].key);
+      double value;
+      valid = _lightroom_number(text, mappings[j].min, mappings[j].max, &value);
+      if(!valid) break;
+      double result = value * mappings[j].scale + mappings[j].offset;
+      // retain the sidecar importer's empirical grain and vignette mappings
+      if(!strcmp(mappings[j].key, "GrainFrequency"))
+        result = (value <= 50 ? 100 : value <= 75 ? 100 + (value - 50) * 12
+                  : 400 + (value - 75) * 16) / 53.3;
+      else if(!strcmp(mappings[j].key, "PostCropVignetteMidpoint"))
+        result = value <= 4 ? 74 + value / 4 : value <= 25 ? 75 + (value - 4) * 10 / 21
+          : value <= 50 ? 85 + (value - 25) * 0.6 : 100;
+      valid = _lightroom_set_param(&module, mappings[j].param, result);
+      g_hash_table_add(converted, g_strdup(mappings[j].key));
+    }
+    if(valid) valid = _lightroom_add_module(style, &module, 0, "");
+    dt_iop_cleanup_module(&module);
+    if(!valid) goto error;
+  }
+  if(!_lightroom_tonecurves(style, properties, elements, converted)
+     || !_lightroom_hsl(style, properties, converted) || !style->plugins) goto error;
+
+  static const char *metadata[] = {
+    "Name", "PresetType", "UUID", "Version", "ProcessVersion", "Group", "Description",
+    "Copyright", "ContactInfo", "SupportsAmount", "SupportsColor", "SupportsMonochrome",
+    "SupportsHighDynamicRange", "SupportsNormalDynamicRange", "SupportsSceneReferred",
+    "SupportsOutputReferred", "CameraModelRestriction", "Cluster", "HasSettings"
+  };
+  for(size_t i = 0; i < G_N_ELEMENTS(metadata); i++)
+    g_hash_table_add(converted, g_strdup(metadata[i]));
+  GList *keys = g_list_sort(g_hash_table_get_keys(properties), (GCompareFunc)g_strcmp0);
+  gboolean first = TRUE;
+  for(GList *key = keys; key; key = key->next)
+    if(!g_hash_table_contains(converted, key->data))
+    {
+      g_string_append(style->info->description, first ? _("\nomitted settings: ") : ", ");
+      g_string_append(style->info->description, key->data);
+      first = FALSE;
+    }
+  g_list_free(keys);
+  goto cleanup;
+
+error:
+  if(style) dt_styles_style_data_free(style, TRUE);
+  style = NULL;
+  dt_control_log(_("cannot import Lightroom preset `%s': invalid or no supported settings"), filename);
+cleanup:
+  g_hash_table_destroy(elements);
+  g_hash_table_destroy(converted);
+  g_hash_table_destroy(properties);
+  if(object) xmlXPathFreeObject(object);
+  if(context) xmlXPathFreeContext(context);
+  if(doc) xmlFreeDoc(doc);
+  return style;
+}
+
 static void dt_styles_start_tag_handler(GMarkupParseContext *context,
                                         const gchar *element_name,
                                         const gchar **attribute_names,
@@ -1620,6 +2085,18 @@ static void dt_style_save(StyleData *style)
 
 void dt_styles_import_from_file(const char *style_path)
 {
+  if(_is_lightroom_preset(style_path))
+  {
+    StyleData *converted = _lightroom_style_read(style_path);
+    if(converted)
+    {
+      dt_style_save(converted);
+      dt_control_log("%s", converted->info->description->str);
+      dt_styles_style_data_free(converted, TRUE);
+      DT_CONTROL_SIGNAL_RAISE(DT_SIGNAL_STYLE_CHANGED);
+    }
+    return;
+  }
   FILE *style_file;
   StyleData *style;
   GMarkupParseContext *parser;
@@ -1761,6 +2238,15 @@ dt_style_t *dt_styles_get_by_name(const char *name)
 
 gchar *dt_get_style_name(const char *filename)
 {
+  if(_is_lightroom_preset(filename))
+  {
+    // validate the conversion before the caller offers to delete an existing style
+    StyleData *style = _lightroom_style_read(filename);
+    if(!style) return NULL;
+    gchar *name = g_strdup(style->info->name->str);
+    dt_styles_style_data_free(style, TRUE);
+    return name;
+  }
   gchar *bname = NULL;
   xmlDoc *document = xmlReadFile(filename, NULL, XML_PARSE_NOBLANKS);
   xmlNode *root = NULL;

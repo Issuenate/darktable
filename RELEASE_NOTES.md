@@ -80,7 +80,32 @@ changes (where available).
   renders run on a throwaway duplicate so the source image is never
   modified.
 
+- A guided "essentials" interface for people new to raw processing.
+  It presents darktable as three steps - add photos, choose, edit &
+  export - with a short left-hand list of destinations, a contextual
+  panel for rating, color labels and albums, and an editor built from
+  plain-language sections such as light, color and detail. A "find
+  anything" box searches everything the interface can do by everyday
+  phrase, for example "make brighter" or "fix the horizon". Export
+  asks four questions - where, what format, how large, how good - and
+  offers the complete export module behind "more options...". The
+  controls are darktable's own, so history, undo, sidecars and
+  rendered output are identical to the complete interface, which is
+  reached under preferences > miscellaneous > interface and comes back
+  with the saved module layout untouched. New installations start in
+  essentials; existing ones are unaffected. The tone behind the photo
+  can be picked separately, under the same preferences section.
+
 ## UI/UX Improvements
+
+- Import Lightroom XMP develop presets through the styles module. Exposure,
+  grain, split toning, clarity, basic vignetting, composite and per-channel
+  point curves, parametric curves, and eight-band HSL adjustments are converted
+  approximately; omitted settings are listed in the imported style's description.
+
+- Added automatic subject, sky, and background selection using existing
+  AI object masking models. Selection uses position and color heuristics
+  and can be refined with clicks before conversion to editable paths.
 
 - Checkboxes are now Bauhaus widgets and are reset to default values
   when e.g. a tab or a module is reset.
@@ -108,6 +133,18 @@ changes (where available).
 - Added an interactive editing mode allowing users to correct a color
   by selecting it directly on the photo with the mouse wheel, just as
   was already possible with the "tone equalizer" module.
+
+- The "color balance rgb" module's 4 ways tab now has a color wheel
+  for each range - global, shadows, midtones and highlights - so the
+  hue and chroma of a range can be reached as one point instead of
+  through two sliders. The disc is painted with the module's own
+  colors and the current output profile, so it matches the sliders
+  rather than showing a generic circle, and the sliders stay for
+  precise input.
+
+- The welcome screen now has a "don't show this again" checkbox.
+  Previously the screen was shown once and never offered again, with
+  no way to ask for it back.
 
 ## Performance Improvements
 

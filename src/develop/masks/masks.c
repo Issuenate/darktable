@@ -1443,6 +1443,7 @@ void dt_masks_clear_form_gui(const dt_develop_t *dev)
   dev->form_gui->creation_closing_form = dev->form_gui->creation = FALSE;
   dev->form_gui->pressure_sensitivity = DT_MASKS_PRESSURE_OFF;
   dev->form_gui->creation_module = NULL;
+  dev->form_gui->object_selection = DT_MASKS_OBJECT_MANUAL;
   dev->form_gui->point_edited = -1;
 
   dev->form_gui->group_edited = -1;

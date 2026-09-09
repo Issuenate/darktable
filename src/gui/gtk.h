@@ -98,6 +98,12 @@ typedef enum dt_gui_color_t
   DT_GUI_COLOR_MAP_LOC_SHAPE_DEF,
   DT_GUI_COLOR_COLOR_ASSESSMENT_BG,
   DT_GUI_COLOR_COLOR_ASSESSMENT_FG,
+  /* append only: the processing modules are separately built shared objects
+   * that hold these values, so inserting above shifts them out from under a
+   * plugin that has not been rebuilt */
+  DT_GUI_COLOR_ESSENTIALS_SURROUND_CHARCOAL,
+  DT_GUI_COLOR_ESSENTIALS_SURROUND_GRAPHITE,
+  DT_GUI_COLOR_ESSENTIALS_SURROUND_SLATE,
   DT_GUI_COLOR_LAST
 } dt_gui_color_t;
 
@@ -216,6 +222,12 @@ void dt_gui_gtk_quit();
 void dt_gui_store_last_preset(const char *name);
 int dt_gui_gtk_load_config();
 int dt_gui_gtk_write_config();
+/*
+ * The ground to paint behind images. Essentials replaces darktable's middle
+ * grey with a darker neutral; `advanced` is the colour to keep otherwise.
+ */
+dt_gui_color_t dt_gui_image_surround_color(const dt_gui_color_t advanced);
+
 void dt_gui_gtk_set_source_rgb(cairo_t *cr, dt_gui_color_t color);
 void dt_gui_gtk_set_source_rgba(cairo_t *cr, dt_gui_color_t color,
                                 const float opacity_coef);
@@ -530,6 +542,13 @@ gboolean dt_gui_show_yes_no_dialog(const char *title,
                                    const char *wname,
                                    const char *format, ...);
 
+/*
+ * Carry the Essentials look onto a dialog. A dialog is its own toplevel, so the
+ * class on the main window does not reach it and it would otherwise render in
+ * darktable's stock grey next to the graphite panels. No-op in Advanced.
+ */
+void dt_gui_dialog_apply_experience(GtkWidget *dialog);
+
 void dt_gui_add_help_link(GtkWidget *widget,
                           const char *link);
 char *dt_gui_get_help_url(GtkWidget *widget);
@@ -549,6 +568,14 @@ void dt_configure_ppd_dpi(dt_gui_gtk_t *gui);
 guint dt_gui_translated_key_state(const GdkEventKey *event);
 
 // return modifier keys currently pressed, independent of any key event
+/*
+ * Whether the guided Essentials interface is active. "auto" means the choice
+ * has not been made yet: a new user starts guided, an existing one does not.
+ * The first caller writes the resolved value back, so the answer cannot change
+ * underneath the UI once anything has asked.
+ */
+gboolean dt_essentials_mode_is_active(void);
+
 GdkModifierType dt_key_modifier_state();
 
 GtkWidget *dt_ui_resize_wrap(GtkWidget *w,

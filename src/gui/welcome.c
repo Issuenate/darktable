@@ -655,6 +655,15 @@ void dt_welcome_screen_page_add_paragraph(dt_welcome_screen_t *ws,
 
 // Called by the close button; destroys the window, which causes the
 // GMainLoop in dt_welcome_screen_show() to quit.
+/* dt_welcome_screen_run_if_needed() clears ui/show_welcome_screen before the
+ * screen is built, so a crash cannot trap the user in a loop. That means the
+ * checkbox writes the flag back on the way out rather than on the way in. */
+static void _remember_show_again(GtkWidget *check)
+{
+  dt_conf_set_bool("ui/show_welcome_screen",
+                   !gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(check)));
+}
+
 static void _on_close(GtkWidget *btn, gpointer data)
 {
   (void)btn;
@@ -737,6 +746,16 @@ void dt_welcome_screen_show(dt_welcome_screen_t *ws)
     dt_gui_box_add(GTK_BOX(progress_box), dot);
   }
 
+  /* The flag is cleared before the screen is shown, for crash safety, so
+   * without this the choice is made for the user: seen once, gone forever.
+   * Whatever is left here on close is what the flag becomes. */
+  GtkWidget *dont_show = gtk_check_button_new_with_label(_("don't show this again"));
+  gtk_widget_set_name(dont_show, "welcome-dont-show");
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(dont_show), TRUE);
+  gtk_widget_set_tooltip_text(dont_show,
+                              _("turn this off to see this screen again next time;"
+                                " it is also under preferences > miscellaneous"));
+
   // Navigation buttons (right-aligned)
   GtkWidget *btn_prev = gtk_button_new_with_mnemonic(_("_prev"));
   gtk_widget_set_name(btn_prev, "welcome-prev");
@@ -747,7 +766,7 @@ void dt_welcome_screen_show(dt_welcome_screen_t *ws)
   GtkWidget *btn_close = gtk_button_new_with_mnemonic(_("_close"));
   gtk_widget_set_name(btn_close, "welcome-close");
 
-  dt_gui_box_add(GTK_BOX(footer), dt_gui_expand(progress_box),
+  dt_gui_box_add(GTK_BOX(footer), progress_box, dt_gui_expand(dont_show),
                  btn_prev, btn_next, btn_close);
 
   // ── navigation state ──────────────────────────────────────────────────────
@@ -766,6 +785,11 @@ void dt_welcome_screen_show(dt_welcome_screen_t *ws)
 
   // Set initial state (hides prev on page 0)
   _update_navigation(&nav);
+
+  /* honour the checkbox however the window is dismissed: the close button, the
+   * window manager, or escape */
+  g_signal_connect_swapped(G_OBJECT(window), "destroy",
+                           G_CALLBACK(_remember_show_again), dont_show);
 
   // Block until the window is destroyed (close button or WM close).
   GMainLoop *loop = g_main_loop_new(NULL, FALSE);

@@ -183,6 +183,9 @@ if(USE_MCP)
   install(FILES mcp_tools.json DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/darktable COMPONENT DTApplication)
 endif(USE_MCP)
 
+FILE(COPY capabilities DESTINATION "${DARKTABLE_DATADIR}")
+install(DIRECTORY capabilities DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/darktable COMPONENT DTApplication)
+
 #
 # Transform darktableconfig.xml into darktablerc
 #

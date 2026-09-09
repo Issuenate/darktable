@@ -23,6 +23,7 @@
 #include "bauhaus/bauhaus.h"
 #include "common/collection.h"
 #include "common/colorspaces.h"
+#include "common/capabilities.h"
 #include "common/darktable.h"
 #include "common/debug.h"
 #include "common/file_location.h"
@@ -899,7 +900,7 @@ void expose(dt_view_t *self,
 
     if(dt_conf_get_bool("darkroom/ui/loading_screen"))
     {
-      dt_gui_gtk_set_source_rgb(cri, DT_GUI_COLOR_DARKROOM_BG);
+      dt_gui_gtk_set_source_rgb(cri, dt_gui_image_surround_color(DT_GUI_COLOR_DARKROOM_BG));
       cairo_paint(cri);
 
       // waiting message
@@ -940,7 +941,7 @@ void expose(dt_view_t *self,
       else
       {
         // No cached surface (first entry from lighttable) — paint background
-        dt_gui_gtk_set_source_rgb(cri, DT_GUI_COLOR_DARKROOM_BG);
+        dt_gui_gtk_set_source_rgb(cri, dt_gui_image_surround_color(DT_GUI_COLOR_DARKROOM_BG));
         cairo_paint(cri);
       }
       dt_toast_log("%s", load_txt);
@@ -5106,7 +5107,7 @@ static gboolean _second_window_draw_callback(GtkWidget *widget,
                                              dt_develop_t *dev)
 {
   // Set background
-  dt_gui_gtk_set_source_rgb(cri, DT_GUI_COLOR_DARKROOM_BG);
+  dt_gui_gtk_set_source_rgb(cri, dt_gui_image_surround_color(DT_GUI_COLOR_DARKROOM_BG));
   cairo_paint(cri);
 
   // Early exit if we're in an inconsistent state

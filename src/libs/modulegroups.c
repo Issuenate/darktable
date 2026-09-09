@@ -19,6 +19,7 @@
 #include "common/gdk_event_utils.h"
 
 #include "bauhaus/bauhaus.h"
+#include "common/capabilities.h"
 #include "common/darktable.h"
 #include "common/debug.h"
 #include "common/image_cache.h"
@@ -50,6 +51,8 @@ DT_MODULE(1)
 
 #define CURRENT_PRESET_NAME "last modified layout"
 #define T_CURRENT_PRESET_NAME _("last modified layout")
+
+#define ESSENTIALS_PRESET_NAME "workflow: essentials"
 
 // list of recommended basics widgets
 #define RECOMMENDED_BASICS                                                                                        \
@@ -94,11 +97,82 @@ typedef struct dt_lib_modulegroups_basic_item_t
   guint padding;
   GtkPackType packtype;
   gchar *tooltip;
+  gchar *old_label;
   int grid_x, grid_y, grid_w, grid_h;
 
   GtkWidget *box;
   dt_iop_module_t *module;
 } dt_lib_modulegroups_basic_item_t;
+
+typedef struct dt_essentials_module_spec_t
+{
+  const char *section;
+  const char *module_op;
+  gboolean expanded;
+} dt_essentials_module_spec_t;
+
+static const dt_essentials_module_spec_t _essentials_modules[] = {
+  { N_("profile"), "colorin", TRUE },
+  { N_("profile"), "monochrome", TRUE },
+  { N_("light"), "exposure", TRUE },
+  { N_("light"), "filmicrgb", TRUE },
+  { N_("light"), "sigmoid", TRUE },
+  { N_("light"), "agx", TRUE },
+  { N_("light"), "toneequal", TRUE },
+  { N_("color"), "temperature", TRUE },
+  { N_("color"), "channelmixerrgb", TRUE },
+  { N_("color"), "colorbalancergb", TRUE },
+  { N_("effects"), "contrastntexture", FALSE },
+  { N_("effects"), "bilat", FALSE },
+  { N_("effects"), "hazeremoval", FALSE },
+  { N_("effects"), "vignette", FALSE },
+  { N_("effects"), "grain", FALSE },
+  { N_("detail"), "sharpen", FALSE },
+  { N_("detail"), "denoiseprofile", FALSE },
+  { N_("optics"), "lens", FALSE },
+  { N_("geometry"), "crop", FALSE },
+  { N_("geometry"), "flip", FALSE },
+  { N_("geometry"), "ashift", FALSE },
+  { NULL, NULL, FALSE }
+};
+
+/*
+ * Some tools cannot be represented by a handful of borrowed sliders: crop and
+ * perspective need the canvas, color grading and the color mixer are whole
+ * notebooks. Essentials offers those as a tool row that opens the module's own
+ * complete interface in the panel, rather than pretending a slider covers it.
+ */
+typedef struct dt_essentials_tool_spec_t
+{
+  const char *section;
+  const char *module_op;
+  const char *label;
+  const char *capability;
+  /* only offer the tool when the module is actually in the pipe. the workflow
+   * decides which tone mapper is enabled, and offering all of them would put
+   * three identical rows in the light section */
+  gboolean enabled_only;
+} dt_essentials_tool_spec_t;
+
+static const dt_essentials_tool_spec_t _essentials_tools[] = {
+  { N_("light"), "filmicrgb", N_("tone curve..."),
+    DT_ESSENTIALS_ACTION("edit.light.tone_curve"), TRUE },
+  { N_("light"), "sigmoid", N_("tone curve..."),
+    DT_ESSENTIALS_ACTION("edit.light.tone_curve"), TRUE },
+  { N_("light"), "agx", N_("tone curve..."),
+    DT_ESSENTIALS_ACTION("edit.light.tone_curve"), TRUE },
+  { N_("light"), "basecurve", N_("tone curve..."),
+    DT_ESSENTIALS_ACTION("edit.light.tone_curve"), TRUE },
+  { N_("color"), "colorbalancergb", N_("color grading..."),
+    DT_ESSENTIALS_ACTION("edit.color.grading"), FALSE },
+  { N_("color"), "colorequal", N_("color mixer..."),
+    DT_ESSENTIALS_ACTION("edit.color.mixer"), FALSE },
+  { N_("geometry"), "crop", N_("crop & straighten..."),
+    DT_ESSENTIALS_ACTION("edit.geometry.crop"), FALSE },
+  { N_("geometry"), "ashift", N_("rotate & perspective..."),
+    DT_ESSENTIALS_ACTION("edit.geometry.straighten"), FALSE },
+  { NULL, NULL, NULL, NULL, FALSE }
+};
 
 typedef struct dt_lib_modulegroups_group_t
 {
@@ -119,6 +193,9 @@ typedef struct dt_lib_modulegroups_t
   GtkWidget *basic_btn;
   GtkWidget *hbox_groups;
   GtkWidget *hbox_search_box;
+  GtkWidget *essentials_title;
+  GtkWidget *essentials_title_label;
+  GtkWidget *essentials_back;
   GtkWidget *deprecated;
   gboolean force_deprecated_message;
   GList *groups;
@@ -149,6 +226,107 @@ typedef struct dt_lib_modulegroups_t
 
   dt_iop_module_t *force_show_module;
 } dt_lib_modulegroups_t;
+
+static const char *_essentials_section_name(const dt_iop_module_t *module)
+{
+  if(!module) return "";
+  if(!dt_essentials_mode_is_active()) return module->name();
+
+  if(!g_strcmp0(module->op, "exposure")) return _("light");
+  if(!g_strcmp0(module->op, "filmicrgb")
+     || !g_strcmp0(module->op, "sigmoid")
+     || !g_strcmp0(module->op, "agx"))
+    return _("tone");
+  if(!g_strcmp0(module->op, "temperature")
+     || !g_strcmp0(module->op, "channelmixerrgb"))
+    return _("white balance");
+  if(!g_strcmp0(module->op, "colorbalancergb")) return _("color");
+  if(!g_strcmp0(module->op, "ashift")) return _("geometry");
+  if(!g_strcmp0(module->op, "denoiseprofile")) return _("noise reduction");
+  if(!g_strcmp0(module->op, "lens")) return _("optics");
+  if(!g_strcmp0(module->op, "bilat")) return _("detail");
+
+  return module->name();
+}
+
+static const char *_essentials_module_name(const char *module_op)
+{
+  if(!g_strcmp0(module_op, "monochrome")) return _("black & white");
+  if(!g_strcmp0(module_op, "toneequal")) return _("tone range");
+  if(!g_strcmp0(module_op, "contrastntexture")) return _("texture");
+  if(!g_strcmp0(module_op, "bilat")) return _("clarity");
+  if(!g_strcmp0(module_op, "hazeremoval")) return _("dehaze");
+  if(!g_strcmp0(module_op, "vignette")) return _("vignette");
+  if(!g_strcmp0(module_op, "grain")) return _("grain");
+  if(!g_strcmp0(module_op, "sharpen")) return _("sharpening");
+  if(!g_strcmp0(module_op, "denoiseprofile")) return _("noise reduction");
+  if(!g_strcmp0(module_op, "lens")) return _("lens corrections");
+  if(!g_strcmp0(module_op, "crop")) return _("crop");
+  if(!g_strcmp0(module_op, "ashift")) return _("geometry");
+  return NULL;
+}
+
+static const char *_essentials_control_name(const char *id)
+{
+  if(!g_strcmp0(id, "colorin/input profile")) return N_("profile");
+  if(!g_strcmp0(id, "exposure/exposure")) return N_("exposure");
+  if(g_str_has_suffix(id, "/contrast")) return N_("contrast");
+  if(g_str_has_suffix(id, "/auto tune levels")) return N_("auto");
+  if(!g_strcmp0(id, "toneequal/highlights")) return N_("highlights");
+  if(!g_strcmp0(id, "toneequal/shadows")) return N_("shadows");
+  if(!g_strcmp0(id, "toneequal/whites")) return N_("whites");
+  if(!g_strcmp0(id, "toneequal/blacks")) return N_("blacks");
+  if(g_str_has_suffix(id, "/temperature")) return N_("temperature");
+  if(!g_strcmp0(id, "channelmixerrgb/hue")) return N_("tint");
+  if(!g_strcmp0(id, "colorbalancergb/global vibrance")) return N_("vibrance");
+  if(!g_strcmp0(id, "colorbalancergb/global saturation")) return N_("saturation");
+  if(!g_strcmp0(id, "contrastntexture/local contrast")) return N_("texture");
+  if(!g_strcmp0(id, "bilat/detail")) return N_("clarity");
+  if(!g_strcmp0(id, "hazeremoval/strength")) return N_("dehaze");
+  if(!g_strcmp0(id, "vignette/brightness")) return N_("vignette");
+  if(!g_strcmp0(id, "grain/strength")) return N_("grain");
+  if(!g_strcmp0(id, "sharpen/amount")) return N_("sharpening");
+  if(!g_strcmp0(id, "sharpen/radius")) return N_("radius");
+  if(!g_strcmp0(id, "denoiseprofile/strength")) return N_("noise reduction");
+  if(!g_strcmp0(id, "denoiseprofile/preserve shadows")) return N_("detail preservation");
+  if(!g_strcmp0(id, "lens/corrections")) return N_("corrections");
+  if(!g_strcmp0(id, "crop/aspect")) return N_("aspect");
+  if(!g_strcmp0(id, "ashift/rotation")) return N_("rotate");
+  if(!g_strcmp0(id, "ashift/automatic cropping")) return N_("constrain crop");
+  return NULL;
+}
+
+// Keep the semantic surface explicit: these are the user goals represented by
+// the real widgets in the Essentials quick-access preset.
+static const char *const _essentials_capabilities[] G_GNUC_UNUSED = {
+  DT_ESSENTIALS_ACTION("edit.profile.choose"),
+  DT_ESSENTIALS_ACTION("edit.monochrome.toggle"),
+  DT_ESSENTIALS_ACTION("edit.exposure.adjust"),
+  DT_ESSENTIALS_ACTION("edit.contrast.adjust"),
+  DT_ESSENTIALS_ACTION("edit.highlights.adjust"),
+  DT_ESSENTIALS_ACTION("edit.shadows.adjust"),
+  DT_ESSENTIALS_ACTION("edit.whites.adjust"),
+  DT_ESSENTIALS_ACTION("edit.blacks.adjust"),
+  DT_ESSENTIALS_ACTION("edit.white_balance.adjust"),
+  DT_ESSENTIALS_ACTION("edit.light.brilliance"),
+  DT_ESSENTIALS_ACTION("edit.color.vibrance"),
+  DT_ESSENTIALS_ACTION("edit.color.saturation"),
+  DT_ESSENTIALS_ACTION("edit.light.tone_curve"),
+  DT_ESSENTIALS_ACTION("edit.color.grading"),
+  DT_ESSENTIALS_ACTION("edit.color.mixer"),
+  DT_ESSENTIALS_ACTION("edit.effects.texture"),
+  DT_ESSENTIALS_ACTION("edit.effects.clarity"),
+  DT_ESSENTIALS_ACTION("edit.effects.dehaze"),
+  DT_ESSENTIALS_ACTION("edit.effects.vignette"),
+  DT_ESSENTIALS_ACTION("edit.effects.grain"),
+  DT_ESSENTIALS_ACTION("edit.geometry.straighten"),
+  DT_ESSENTIALS_ACTION("edit.geometry.crop"),
+  DT_ESSENTIALS_ACTION("edit.detail.denoise"),
+  DT_ESSENTIALS_ACTION("edit.detail.adjust"),
+  DT_ESSENTIALS_ACTION("edit.detail.sharpen"),
+  DT_ESSENTIALS_ACTION("edit.optics.correct"),
+  NULL
+};
 
 typedef enum dt_lib_modulegroup_iop_visibility_type_t
 {
@@ -333,6 +511,7 @@ static void _basics_free_item(dt_lib_modulegroups_basic_item_t *item)
   g_free(item->module_op);
   if(item->tooltip) g_free(item->tooltip);
   g_free(item->widget_name);
+  g_free(item->old_label);
 }
 
 static void _basics_remove_widget(dt_lib_modulegroups_basic_item_t *item)
@@ -372,7 +551,11 @@ static void _basics_remove_widget(dt_lib_modulegroups_basic_item_t *item)
     }
     // put back label
     if(DT_IS_BAUHAUS_WIDGET(item->widget))
+    {
+      if(item->old_label)
+        dt_bauhaus_widget_set_label(item->widget, NULL, item->old_label);
       dt_bauhaus_widget_set_show_extended_label(item->widget, FALSE);
+    }
   }
   // cleanup item
   item->widget = NULL;
@@ -382,6 +565,7 @@ static void _basics_remove_widget(dt_lib_modulegroups_basic_item_t *item)
   item->temp_widget = NULL;
   item->old_parent = NULL;
   item->module = NULL;
+  g_clear_pointer(&item->old_label, g_free);
   if(item->tooltip)
   {
     g_free(item->tooltip);
@@ -429,6 +613,22 @@ static void _basics_on_off_label_callback(GtkGestureSingle *gesture,
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(btn), !gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(btn)));
 }
 
+static void _basics_proxy_toggled(GtkToggleButton *proxy,
+                                  GtkToggleButton *target)
+{
+  const gboolean active = gtk_toggle_button_get_active(proxy);
+  if(active != gtk_toggle_button_get_active(target))
+    gtk_toggle_button_set_active(target, active);
+}
+
+static void _basics_target_toggled(GtkToggleButton *target,
+                                   GtkToggleButton *proxy)
+{
+  const gboolean active = gtk_toggle_button_get_active(target);
+  if(active != gtk_toggle_button_get_active(proxy))
+    gtk_toggle_button_set_active(proxy, active);
+}
+
 static void _sync_visibility(GtkWidget *widget,
                              GParamSpec *pspec,
                              dt_lib_modulegroups_basic_item_t *item)
@@ -460,13 +660,15 @@ static void _basics_add_widget(dt_lib_module_t *self, dt_lib_modulegroups_basic_
   }
 
   // what type of ui we have ?
-  const gboolean compact_ui = !dt_conf_get_bool("plugins/darkroom/modulegroups_basics_sections_labels");
+  const gboolean essentials = dt_essentials_mode_is_active();
+  const gboolean compact_ui = !essentials
+                              && !dt_conf_get_bool("plugins/darkroom/modulegroups_basics_sections_labels");
 
   // we retrieve parents, positions, etc... so we can put the widget back in its module
   if(item->widget_type == WIDGET_TYPE_ACTIVATE_BTN)
   {
     // we only show the on-off widget for compact ui. otherwise the button is included in the header
-    if(compact_ui)
+    if(compact_ui || essentials)
     {
       // on-off widgets
       item->widget = GTK_WIDGET(item->module->off);
@@ -476,40 +678,70 @@ static void _basics_add_widget(dt_lib_module_t *self, dt_lib_modulegroups_basic_
       item->box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
       gtk_widget_set_name(item->box, "basics-widget");
 
-      // we create a new button linked with the real one
-      // because it create too much pb to remove the button from the expander
-      GtkWidget *btn = dt_iop_gui_header_button(item->module,
-                                                dtgtk_cairo_paint_switch,
-                                                DT_ACTION_ELEMENT_ENABLE,
-                                                item->box);
-      GtkWidget *evb = gtk_event_box_new();
-      GtkWidget *lb = gtk_label_new(item->module->name());
-      gtk_label_set_xalign(GTK_LABEL(lb), 0.0);
-      gtk_widget_set_name(lb, "basics-iop_name");
-      gtk_container_add(GTK_CONTAINER(evb), lb);
-      /* Keep the label proxy in sync with the enable button.  In particular,
-       * an insensitive button can still be toggled by set_active(). */
-      gtk_widget_set_sensitive(evb, gtk_widget_get_sensitive(btn));
-      dt_gui_connect_click(evb, _basics_on_off_label_callback, NULL, btn);
-      gtk_box_pack_start(GTK_BOX(item->box), evb, FALSE, TRUE, 0);
+      GtkWidget *btn = NULL;
+      GtkWidget *label_widget = NULL;
+      GtkWidget *label_box = NULL;
+      if(essentials)
+      {
+        const char *module_name = _essentials_module_name(item->module->op);
+        btn = gtk_check_button_new_with_label(module_name ? module_name
+                                                          : item->module->name());
+        gtk_widget_set_name(btn, "essentials-module-toggle");
+        /* the row reads as a list, so the name starts where every other
+         * section's does; a GtkButton centers its child otherwise */
+        GtkWidget *check_label = gtk_bin_get_child(GTK_BIN(btn));
+        if(GTK_IS_LABEL(check_label))
+          gtk_label_set_xalign(GTK_LABEL(check_label), 0.0);
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(btn),
+                                     gtk_toggle_button_get_active(
+                                         GTK_TOGGLE_BUTTON(item->widget)));
+        gtk_widget_set_sensitive(btn, gtk_widget_get_sensitive(item->widget));
+        g_signal_connect(btn, "toggled", G_CALLBACK(_basics_proxy_toggled),
+                         item->widget);
+        g_signal_connect_object(item->widget, "toggled",
+                                G_CALLBACK(_basics_target_toggled), btn, 0);
+        gtk_box_pack_start(GTK_BOX(item->box), btn, TRUE, TRUE, 0);
+        label_widget = btn;
+        label_box = btn;
+      }
+      else
+      {
+        // we create a new button linked with the real one because removing the
+        // original button from the expander causes lifecycle problems.
+        btn = dt_iop_gui_header_button(item->module,
+                                       dtgtk_cairo_paint_switch,
+                                       DT_ACTION_ELEMENT_ENABLE,
+                                       item->box);
+        GtkWidget *evb = gtk_event_box_new();
+        GtkWidget *lb = gtk_label_new(item->module->name());
+        gtk_label_set_xalign(GTK_LABEL(lb), 0.0);
+        gtk_widget_set_name(lb, "basics-iop_name");
+        gtk_container_add(GTK_CONTAINER(evb), lb);
+        gtk_widget_set_sensitive(evb, gtk_widget_get_sensitive(btn));
+        dt_gui_connect_click(evb, _basics_on_off_label_callback, NULL, btn);
+        gtk_box_pack_start(GTK_BOX(item->box), evb, FALSE, TRUE, 0);
+        label_widget = lb;
+        label_box = evb;
+      }
 
       // disable widget if needed (multiinstance)
       if(dt_iop_count_instances(item->module->so) > 1)
       {
-        gtk_widget_set_sensitive(evb, FALSE);
+        const char *multi_instance =
+            _("this quick access widget is disabled as there are multiple instances "
+              "of this module present. Please use the full module to access this widget...");
         gtk_widget_set_sensitive(btn, FALSE);
-        gtk_widget_set_tooltip_text(
-            lb, _("this quick access widget is disabled as there are multiple instances "
-                  "of this module present. Please use the full module to access this widget..."));
-        gtk_widget_set_tooltip_text(
-            btn, _("this quick access widget is disabled as there are multiple instances "
-                   "of this module present. Please use the full module to access this widget..."));
+        /* the label carries a click of its own, and an insensitive button can
+         * still be toggled through set_active(), so it has to go too */
+        gtk_widget_set_sensitive(label_box, FALSE);
+        gtk_widget_set_tooltip_text(label_widget, multi_instance);
+        gtk_widget_set_tooltip_text(btn, multi_instance);
       }
       else
       {
         GtkWidget *orig_label = gtk_widget_get_parent(item->module->label);
         gchar *tooltip = gtk_widget_get_tooltip_text(orig_label);
-        gtk_widget_set_tooltip_text(lb, tooltip);
+        gtk_widget_set_tooltip_text(label_widget, tooltip);
         gtk_widget_set_tooltip_text(btn, tooltip);
         g_free(tooltip);
       }
@@ -564,7 +796,11 @@ static void _basics_add_widget(dt_lib_module_t *self, dt_lib_modulegroups_basic_
     // change the widget label to integrate section name
     if(DT_IS_BAUHAUS_WIDGET(w))
     {
-      dt_bauhaus_widget_set_show_extended_label(item->widget, TRUE);
+      item->old_label = g_strdup(dt_bauhaus_widget_get_label(item->widget));
+      const char *control_name = essentials ? _essentials_control_name(item->id) : NULL;
+      if(control_name)
+        dt_bauhaus_widget_set_label(item->widget, NULL, control_name);
+      dt_bauhaus_widget_set_show_extended_label(item->widget, !essentials);
       item->module = dt_bauhaus_widget_get_module(item->widget);
     }
 
@@ -589,9 +825,12 @@ static void _basics_add_widget(dt_lib_module_t *self, dt_lib_modulegroups_basic_
       }
     }
 
-    gchar *txt = g_strdup_printf("%s (%s)\n\n%s%s%s", item->widget_name, item->module->name(),
-                                  item->tooltip ? item->tooltip : "", item->tooltip ? "\n\n" : "",
-                                  _("(some features may only be available in the full module interface)"));
+    gchar *txt = essentials
+                   ? g_strdup_printf("%s\n\n%s", item->widget_name,
+                                     item->tooltip ? item->tooltip : "")
+                   : g_strdup_printf("%s (%s)\n\n%s%s%s", item->widget_name, item->module->name(),
+                                     item->tooltip ? item->tooltip : "", item->tooltip ? "\n\n" : "",
+                                     _("(some features may only be available in the full module interface)"));
     gtk_widget_set_tooltip_text(item->widget, txt);
     g_free(txt);
 
@@ -613,7 +852,7 @@ static void _basics_add_widget(dt_lib_module_t *self, dt_lib_modulegroups_basic_
     gtk_container_add(GTK_CONTAINER(evb), header_box);
     gtk_widget_show_all(evb);
     g_object_set_data(G_OBJECT(evb), "module", item->module->so);
-    dt_gui_connect_click_secondary(evb, _manage_direct_module_popup, NULL, self);
+    if(!essentials) dt_gui_connect_click_secondary(evb, _manage_direct_module_popup, NULL, self);
     gtk_widget_set_name(header_box, "basics-header-box");
     dt_gui_add_class(header_box, "dt_big_btn_canvas");
     gtk_box_pack_start(GTK_BOX(d->vbox_basic), evb, FALSE, FALSE, 0);
@@ -635,6 +874,8 @@ static void _basics_add_widget(dt_lib_module_t *self, dt_lib_modulegroups_basic_
     gtk_widget_show(wbt);
     gtk_widget_set_name(wbt, "basics-link");
     gtk_widget_set_valign(wbt, GTK_ALIGN_CENTER);
+    gtk_widget_set_visible(wbt, !essentials);
+    gtk_widget_set_no_show_all(wbt, essentials);
     g_free(tt);
     dt_gui_connect_click(wbt, _basics_goto_module, NULL, item->module);
     gtk_box_pack_end(GTK_BOX(compact_ui ? hbox_basic : header_box), wbt, FALSE, FALSE, 0);
@@ -646,6 +887,8 @@ static void _basics_add_widget(dt_lib_module_t *self, dt_lib_modulegroups_basic_
                                               compact_ui ? hbox_basic : header_box);
     gtk_widget_set_name(pbt, "quick-presets");
     gtk_widget_set_valign(pbt, GTK_ALIGN_CENTER);
+    gtk_widget_set_visible(pbt, !essentials);
+    gtk_widget_set_no_show_all(pbt, essentials);
 
     // we create a button to reset the module
     GtkWidget *rbt = dt_iop_gui_header_button(item->module,
@@ -666,8 +909,8 @@ static void _basics_add_widget(dt_lib_module_t *self, dt_lib_modulegroups_basic_
       gtk_widget_set_valign(btn, GTK_ALIGN_CENTER);
       dt_gui_add_class(btn, "dt_transparent_background");
       // we add to the module header the section label and the link to the full iop
-      GtkWidget *sect = dt_ui_section_label_new(item->module->name());
-      gtk_label_set_xalign(GTK_LABEL(sect), 0.5); // we center the module name
+      GtkWidget *sect = dt_ui_section_label_new(_essentials_section_name(item->module));
+      gtk_label_set_xalign(GTK_LABEL(sect), essentials ? 0.0 : 0.5);
       gtk_widget_show(sect);
       gtk_box_pack_start(GTK_BOX(header_box), sect, TRUE, TRUE, 0);
     }
@@ -748,6 +991,96 @@ _basics_add_items_from_module_widget(dt_lib_module_t *self, dt_iop_module_t *mod
   return item_pos;
 }
 
+static dt_iop_module_t *_essentials_find_module(const char *op)
+{
+  for(GList *modules = darktable.develop->iop; modules; modules = g_list_next(modules))
+  {
+    dt_iop_module_t *candidate = modules->data;
+    if(!g_strcmp0(candidate->op, op)
+       && !dt_iop_is_hidden(candidate)
+       && !(candidate->flags() & IOP_FLAGS_DEPRECATED)
+       && candidate->iop_order != INT_MAX)
+      return candidate;
+  }
+  return NULL;
+}
+
+/* Enter or leave the Essentials tool mode. Passing NULL returns to the
+ * sections. force_show_module is the existing single-module filter, but
+ * _lib_modulegroups_switch_to() clears it, so the group is set by hand here and
+ * the panel refreshed through the update proxy, which leaves it alone. */
+static void _essentials_set_tool(dt_lib_module_t *self,
+                                 dt_iop_module_t *module,
+                                 const char *label)
+{
+  dt_lib_modulegroups_t *d = self->data;
+
+  if(module)
+  {
+    d->current = DT_MODULEGROUP_INVALID;
+    d->force_show_module = module;
+    _lib_modulegroups_update_visibility_proxy(self);
+    dt_iop_gui_set_expanded(module, TRUE, FALSE);
+    dt_iop_request_focus(module);
+    gtk_label_set_text(GTK_LABEL(d->essentials_title_label), label);
+  }
+  else
+  {
+    dt_iop_request_focus(NULL);
+    d->force_show_module = NULL;
+    d->current = DT_MODULEGROUP_BASICS;
+    dt_conf_set_int("plugins/darkroom/groups", d->current);
+    _lib_modulegroups_update_visibility_proxy(self);
+    gtk_label_set_text(GTK_LABEL(d->essentials_title_label), _("edit"));
+  }
+  gtk_widget_set_visible(d->essentials_back, module != NULL);
+}
+
+/* _essentials_set_tool() rebuilds the panel, which destroys this button. That
+ * is safe as long as nothing here touches it afterwards: the spec is read out
+ * first and points into static storage. _basics_goto_module() below does the
+ * same thing from a widget inside the same box. */
+static void _essentials_tool_clicked(GtkButton *button, dt_lib_module_t *self)
+{
+  const dt_essentials_tool_spec_t *tool =
+    g_object_get_data(G_OBJECT(button), "essentials-tool");
+  g_return_if_fail(dt_capability_get(tool->capability));
+  dt_iop_module_t *module = _essentials_find_module(tool->module_op);
+  if(module) _essentials_set_tool(self, module, _(tool->label));
+}
+
+static void _essentials_back_clicked(GtkButton *button, dt_lib_module_t *self)
+{
+  _essentials_set_tool(self, NULL, NULL);
+}
+
+/* append the tool rows belonging to one finished section */
+static void _essentials_add_tools(dt_lib_module_t *self,
+                                  const char *section,
+                                  GtkWidget *box)
+{
+  if(!section || !box) return;
+
+  for(const dt_essentials_tool_spec_t *tool = _essentials_tools; tool->section; tool++)
+  {
+    if(g_strcmp0(tool->section, section)) continue;
+    const dt_capability_descriptor_t *capability = dt_capability_get(tool->capability);
+    if(!capability) continue;  // tools/check_capability_registry.py rejects this
+    const dt_iop_module_t *module = _essentials_find_module(tool->module_op);
+    if(!module) continue;
+    if(tool->enabled_only && !module->enabled) continue;
+
+    GtkWidget *button = gtk_button_new_with_label(_(tool->label));
+    gtk_widget_set_name(button, "essentials-tool");
+    gtk_widget_set_halign(gtk_bin_get_child(GTK_BIN(button)), GTK_ALIGN_START);
+    gtk_widget_set_tooltip_text(button, _(capability->description));
+    g_object_set_data(G_OBJECT(button), "essentials-tool", (gpointer)tool);
+    g_signal_connect(button, "clicked", G_CALLBACK(_essentials_tool_clicked), self);
+    gtk_box_pack_start(GTK_BOX(box), button, FALSE, FALSE, 0);
+    gtk_widget_show_all(button);
+  }
+}
+
 static void _basics_show(dt_lib_module_t *self)
 {
   dt_lib_modulegroups_t *d = self->data;
@@ -766,39 +1099,96 @@ static void _basics_show(dt_lib_module_t *self)
     d->vbox_basic = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     dt_ui_container_add_widget(darktable.gui->ui, DT_UI_CONTAINER_PANEL_RIGHT_CENTER, d->vbox_basic);
   }
-  if(dt_conf_get_bool("plugins/darkroom/modulegroups_basics_sections_labels"))
+  if(dt_essentials_mode_is_active() || dt_conf_get_bool("plugins/darkroom/modulegroups_basics_sections_labels"))
     gtk_widget_set_name(d->vbox_basic, "basics-box-labels");
   else
     gtk_widget_set_name(d->vbox_basic, "basics-box");
   dt_gui_add_class(d->vbox_basic,"dt_plugin_ui");
+  if(dt_essentials_mode_is_active())
+    dt_gui_add_class(d->vbox_basic, "essentials-editor");
+  else
+    dt_gui_remove_class(d->vbox_basic, "essentials-editor");
 
-  dt_lib_modulegroups_basic_item_position_t item_pos = FIRST_MODULE;
-  for(GList *modules = g_list_last(darktable.develop->iop); modules; modules = g_list_previous(modules))
+  if(dt_essentials_mode_is_active())
   {
-    dt_iop_module_t *module = modules->data;
-
-    // we record if it's a new module or not to set css class and box structure
-    if(item_pos != FIRST_MODULE) item_pos = NEW_MODULE;
-
-    if(!dt_iop_is_hidden(module) && !(module->flags() & IOP_FLAGS_DEPRECATED) && module->iop_order != INT_MAX)
+    const char *current_section = NULL;
+    GtkWidget *section_box = NULL;
+    for(const dt_essentials_module_spec_t *spec = _essentials_modules; spec->section; spec++)
     {
-      // first, we add on-off buttons if any
+      dt_iop_module_t *module = _essentials_find_module(spec->module_op);
+      if(!module) continue;
+
+      gboolean has_items = FALSE;
+      for(const GList *l = d->basics; l; l = g_list_next(l))
+      {
+        const dt_lib_modulegroups_basic_item_t *item = l->data;
+        if(!item->module && !g_strcmp0(item->module_op, module->op))
+        {
+          has_items = TRUE;
+          break;
+        }
+      }
+      if(!has_items) continue;
+
+      if(g_strcmp0(current_section, spec->section))
+      {
+        _essentials_add_tools(self, current_section, section_box);
+        GtkWidget *section = gtk_expander_new(_(spec->section));
+        gtk_widget_set_name(section, "essentials-edit-section");
+        gtk_expander_set_expanded(GTK_EXPANDER(section), spec->expanded);
+        d->mod_vbox_basic = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        gtk_container_add(GTK_CONTAINER(section), d->mod_vbox_basic);
+        gtk_box_pack_start(GTK_BOX(d->vbox_basic), section, FALSE, FALSE, 0);
+        gtk_widget_show_all(section);
+        current_section = spec->section;
+        section_box = d->mod_vbox_basic;
+      }
+
       for(const GList *l = d->basics; l; l = g_list_next(l))
       {
         dt_lib_modulegroups_basic_item_t *item = l->data;
-        if(!item->module && g_strcmp0(item->module_op, module->op) == 0)
+        if(!item->module && !g_strcmp0(item->module_op, module->op)
+           && item->widget_type == WIDGET_TYPE_ACTIVATE_BTN)
         {
-          if(item->widget_type == WIDGET_TYPE_ACTIVATE_BTN)
-          {
-            item->module = module;
-            _basics_add_widget(self, item, NULL, item_pos);
-            item_pos = NORMAL;
-          }
+          item->module = module;
+          _basics_add_widget(self, item, NULL, NORMAL);
         }
       }
 
-      // for the other items, we want them in same order as the module gui
-      _basics_add_items_from_module_widget(self, module, module->widget, item_pos);
+      _basics_add_items_from_module_widget(self, module, module->widget, NORMAL);
+    }
+    _essentials_add_tools(self, current_section, section_box);
+  }
+  else
+  {
+    dt_lib_modulegroups_basic_item_position_t item_pos = FIRST_MODULE;
+    for(GList *modules = g_list_last(darktable.develop->iop); modules; modules = g_list_previous(modules))
+    {
+      dt_iop_module_t *module = modules->data;
+
+      // we record if it's a new module or not to set css class and box structure
+      if(item_pos != FIRST_MODULE) item_pos = NEW_MODULE;
+
+      if(!dt_iop_is_hidden(module) && !(module->flags() & IOP_FLAGS_DEPRECATED) && module->iop_order != INT_MAX)
+      {
+        // first, we add on-off buttons if any
+        for(const GList *l = d->basics; l; l = g_list_next(l))
+        {
+          dt_lib_modulegroups_basic_item_t *item = l->data;
+          if(!item->module && g_strcmp0(item->module_op, module->op) == 0)
+          {
+            if(item->widget_type == WIDGET_TYPE_ACTIVATE_BTN)
+            {
+              item->module = module;
+              _basics_add_widget(self, item, NULL, item_pos);
+              item_pos = NORMAL;
+            }
+          }
+        }
+
+        // for the other items, we want them in same order as the module gui
+        _basics_add_items_from_module_widget(self, module, module->widget, item_pos);
+      }
     }
   }
 
@@ -834,6 +1224,18 @@ static void _lib_modulegroups_update_iop_visibility(dt_lib_module_t *self)
 
   // we hide eventual basic panel
   if(d->current == DT_MODULEGROUP_BASICS && !d->basics_show) d->current = DT_MODULEGROUP_ACTIVE_PIPE;
+
+  /* Essentials hides the group buttons, so a group switch coming from anywhere
+   * else -- a module's show shortcut reaching _show_module_callback(), or a
+   * history entry -- would strand the user in the technical module list with
+   * no way back. Tool mode is the one deliberate exception, and it is the only
+   * thing that sets force_show_module here. */
+  if(dt_essentials_mode_is_active()
+     && d->basics_show
+     && d->current != DT_MODULEGROUP_BASICS
+     && !d->force_show_module)
+    d->current = DT_MODULEGROUP_BASICS;
+
   _basics_hide(self);
 
   // if we have a module to force or still have none selected, set d-current to active pipe
@@ -1718,6 +2120,103 @@ void init_presets(dt_lib_module_t *self)
   AM("diffuse");
 
   dt_lib_presets_add(_("modules: all"),
+                     self->plugin_name, self->version(), tx, strlen(tx), TRUE, 0);
+
+  // Essentials keeps a small Lightroom-style inspector while reusing the
+  // original processing widgets, history stack and module parameters.
+  g_free(tx);
+  tx = g_strdup("0|0ꬹ1||");
+
+  AM("colorin/input profile");
+  AM("monochrome");
+  AM("exposure/exposure");
+  if(is_scene_referred)
+  {
+    if(wf_filmic)
+    {
+      AM("filmicrgb/auto tune levels");
+      AM("filmicrgb/contrast");
+    }
+    else if(wf_sigmoid)
+      AM("sigmoid/contrast");
+    else if(wf_agx)
+    {
+      AM("agx/exposure range/auto tune levels");
+      AM("agx/curve/contrast");
+    }
+    AM("channelmixerrgb/temperature");
+    AM("channelmixerrgb/hue");
+  }
+  else
+  {
+    AM("temperature/temperature");
+    AM("temperature/tint");
+    AM("colorbalancergb/contrast");
+  }
+  AM("toneequal");
+  AM("toneequal/highlights");
+  AM("toneequal/shadows");
+  AM("toneequal/whites");
+  AM("toneequal/blacks");
+  AM("colorbalancergb/global vibrance");
+  AM("colorbalancergb/global saturation");
+  AM("contrastntexture");
+  AM("contrastntexture/local contrast");
+  AM("bilat");
+  AM("bilat/detail");
+  AM("hazeremoval");
+  AM("hazeremoval/strength");
+  AM("vignette");
+  AM("vignette/brightness");
+  AM("grain");
+  AM("grain/strength");
+  AM("sharpen");
+  AM("sharpen/amount");
+  AM("sharpen/radius");
+  AM("denoiseprofile");
+  AM("denoiseprofile/strength");
+  AM("denoiseprofile/preserve shadows");
+  AM("lens");
+  AM("lens/corrections");
+  AM("crop");
+  AM("crop/aspect");
+  AM("flip/rotate 90 degrees CCW");
+  AM("flip/rotate 90 degrees CW");
+  AM("ashift");
+  AM("ashift/rotation");
+  AM("ashift/automatic cropping");
+
+  SMG(C_("modulegroup", "light"), "tone");
+  AM("exposure");
+  AM("toneequal");
+  if(wf_filmic) AM("filmicrgb");
+  if(wf_sigmoid) AM("sigmoid");
+  if(wf_agx) AM("agx");
+
+  SMG(C_("modulegroup", "color"), "color");
+  AM("temperature");
+  AM("channelmixerrgb");
+  AM("colorbalancergb");
+  AM("colorequal");
+
+  SMG(C_("modulegroup", "geometry"), "correct");
+  AM("crop");
+  AM("ashift");
+  AM("flip");
+  AM("lens");
+
+  SMG(C_("modulegroup", "detail"), "detail");
+  AM("denoiseprofile");
+  AM("bilat");
+  AM("contrastntexture");
+  AM("sharpen");
+
+  SMG(C_("modulegroup", "effects"), "effect");
+  AM("grain");
+  AM("vignette");
+  AM("blurs");
+
+  dt_lib_presets_add(ESSENTIALS_PRESET_NAME,
                      self->plugin_name, self->version(), tx, strlen(tx), TRUE, 0);
 
   // minimal / 3 tabs
@@ -3145,6 +3644,21 @@ void gui_init(dt_lib_module_t *self)
 
   d->hbox_buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
   d->hbox_search_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+  d->essentials_title = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+  gtk_widget_set_name(d->essentials_title, "essentials-editor-title");
+  d->essentials_back = dtgtk_button_new(dtgtk_cairo_paint_arrow,
+                                        CPF_DIRECTION_LEFT, NULL);
+  gtk_widget_set_name(d->essentials_back, "essentials-tool-back");
+  gtk_widget_set_tooltip_text(d->essentials_back, _("back to all adjustments"));
+  atk_object_set_name(gtk_widget_get_accessible(d->essentials_back),
+                      _("back to all adjustments"));
+  g_signal_connect(d->essentials_back, "clicked",
+                   G_CALLBACK(_essentials_back_clicked), self);
+  gtk_box_pack_start(GTK_BOX(d->essentials_title), d->essentials_back, FALSE, FALSE, 0);
+  d->essentials_title_label = gtk_label_new(_("edit"));
+  gtk_widget_set_halign(d->essentials_title_label, GTK_ALIGN_START);
+  gtk_widget_set_hexpand(d->essentials_title_label, TRUE);
+  gtk_box_pack_start(GTK_BOX(d->essentials_title), d->essentials_title_label, TRUE, TRUE, 0);
 
   // groups
   d->hbox_groups = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
@@ -3219,6 +3733,7 @@ void gui_init(dt_lib_module_t *self)
   gtk_entry_set_icon_tooltip_text(GTK_ENTRY(d->text_entry),
                                   GTK_ENTRY_ICON_SECONDARY, _("clear text"));
 
+  gtk_box_pack_start(GTK_BOX(self->widget), d->essentials_title, TRUE, TRUE, 0);
   gtk_box_pack_start(GTK_BOX(self->widget), d->hbox_buttons, TRUE, TRUE, 0);
   gtk_box_pack_start(GTK_BOX(self->widget), d->hbox_search_box, TRUE, TRUE, 0);
 
@@ -3244,6 +3759,10 @@ void gui_init(dt_lib_module_t *self)
   if(d->current == DT_MODULEGROUP_NONE) _lib_modulegroups_update_iop_visibility(self);
   gtk_widget_show_all(self->widget);
   gtk_widget_set_no_show_all(d->deprecated, TRUE);
+  gtk_widget_set_no_show_all(d->essentials_title, TRUE);
+  gtk_widget_hide(d->essentials_title);
+  gtk_widget_set_no_show_all(d->essentials_back, TRUE);
+  gtk_widget_hide(d->essentials_back);
   gtk_widget_set_no_show_all(d->hbox_buttons, TRUE);
   gtk_widget_set_no_show_all(d->hbox_search_box, TRUE);
 
@@ -4402,7 +4921,32 @@ void view_leave(dt_lib_module_t *self,
 {
   if(!strcmp(old_view->module_name, "darkroom"))
   {
+    dt_lib_modulegroups_t *d = self->data;
+    d->force_show_module = NULL;
     _basics_hide(self);
+  }
+}
+
+static void _set_experience_chrome(dt_lib_modulegroups_t *d, const gboolean essentials)
+{
+  /* the tool rows only exist in Essentials, so a tool must never survive into
+   * the Advanced panel, where nothing would offer a way back */
+  d->force_show_module = NULL;
+  gtk_label_set_text(GTK_LABEL(d->essentials_title_label), _("edit"));
+  gtk_widget_set_visible(d->essentials_back, FALSE);
+  gtk_widget_set_visible(d->essentials_title, essentials);
+  gtk_widget_set_visible(d->hbox_buttons, !essentials);
+  gtk_widget_set_visible(d->hbox_search_box, !essentials && d->show_search);
+  GtkWidget *right_panel = GTK_WIDGET(dt_ui_get_container(
+    darktable.gui->ui, DT_UI_CONTAINER_PANEL_RIGHT_CENTER));
+  while(right_panel && g_strcmp0(gtk_widget_get_name(right_panel), "right"))
+    right_panel = gtk_widget_get_parent(right_panel);
+  if(right_panel)
+  {
+    if(essentials)
+      dt_gui_add_class(right_panel, "essentials-panel");
+    else
+      dt_gui_remove_class(right_panel, "essentials-panel");
   }
 }
 
@@ -4413,15 +4957,45 @@ void view_enter(dt_lib_module_t *self,
   if(!strcmp(new_view->module_name, "darkroom"))
   {
     dt_lib_modulegroups_t *d = self->data;
+    const gboolean essentials = dt_essentials_mode_is_active();
 
-    // and we initialize the buttons too
+    // Keep the user's complete module layout intact. Essentials temporarily
+    // replaces only the presentation and restores the exact preset/group when
+    // Advanced mode returns.
     char *preset = dt_conf_get_string("plugins/darkroom/modulegroups_preset");
-    if(!dt_lib_presets_apply(preset, self->plugin_name, self->version()))
-      dt_lib_presets_apply(_(FALLBACK_PRESET_NAME), self->plugin_name, self->version());
+    if(essentials)
+    {
+      if(g_strcmp0(preset, ESSENTIALS_PRESET_NAME))
+      {
+        dt_conf_set_string("ui/advanced_modulegroups_preset", preset);
+        dt_conf_set_int("ui/advanced_modulegroups_group",
+                        dt_conf_get_int("plugins/darkroom/groups"));
+      }
+
+      if(!dt_lib_presets_apply(ESSENTIALS_PRESET_NAME, self->plugin_name, self->version()))
+        dt_lib_presets_apply(_(FALLBACK_PRESET_NAME), self->plugin_name, self->version());
+      d->current = DT_MODULEGROUP_BASICS;
+      dt_conf_set_int("plugins/darkroom/groups", d->current);
+    }
+    else if(!g_strcmp0(preset, ESSENTIALS_PRESET_NAME))
+    {
+      const char *saved = dt_conf_get_string_const("ui/advanced_modulegroups_preset");
+      if(!saved || !*saved
+         || !dt_lib_presets_apply(saved, self->plugin_name, self->version()))
+        dt_lib_presets_apply(_(FALLBACK_PRESET_NAME), self->plugin_name, self->version());
+      d->current = dt_conf_get_int("ui/advanced_modulegroups_group");
+      dt_conf_set_int("plugins/darkroom/groups", d->current);
+    }
+    else
+    {
+      if(!dt_lib_presets_apply(preset, self->plugin_name, self->version()))
+        dt_lib_presets_apply(_(FALLBACK_PRESET_NAME), self->plugin_name, self->version());
+      d->current = dt_conf_get_int("plugins/darkroom/groups");
+    }
     g_free(preset);
 
-    // and set the current group
-    d->current = dt_conf_get_int("plugins/darkroom/groups");
+    _set_experience_chrome(d, essentials);
+    _lib_modulegroups_set(self, d->current);
   }
 }
 

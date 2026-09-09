@@ -17,6 +17,7 @@
 */
 
 #include "mcp/mcp_tools.h"
+#include "common/capabilities.h"
 #include "mcp/dt_bridge.h"
 
 #include <stdio.h>
@@ -492,6 +493,147 @@ static JsonNode *_tool_export_images(JsonObject *args)
   return r;
 }
 
+static void _add_string_array(JsonObject *object,
+                              const char *member,
+                              const char *const *values)
+{
+  JsonArray *array = json_array_new();
+  for(const char *const *value = values; value && *value; value++)
+    json_array_add_string_element(array, *value);
+  json_object_set_array_member(object, member, array);
+}
+
+static JsonObject *_capability_object(const dt_capability_descriptor_t *capability)
+{
+  JsonObject *object = json_object_new();
+  json_object_set_string_member(object, "schema_version", "1.0");
+  json_object_set_string_member(object, "id", capability->id);
+  json_object_set_int_member(object, "version", capability->version);
+  json_object_set_string_member(object, "name", capability->name);
+  json_object_set_string_member(object, "description", capability->description);
+  _add_string_array(object, "synonyms", capability->synonyms);
+  _add_string_array(object, "examples", capability->examples);
+  json_object_set_string_member(object, "help_reference", capability->help_reference);
+
+  JsonArray *contexts = json_array_new();
+  if(capability->contexts & DT_CAPABILITY_CONTEXT_GLOBAL)
+    json_array_add_string_element(contexts, "global");
+  if(capability->contexts & DT_CAPABILITY_CONTEXT_LIBRARY)
+    json_array_add_string_element(contexts, "library");
+  if(capability->contexts & DT_CAPABILITY_CONTEXT_EDIT)
+    json_array_add_string_element(contexts, "edit");
+  if(capability->contexts & DT_CAPABILITY_CONTEXT_EXPORT)
+    json_array_add_string_element(contexts, "export");
+  json_object_set_array_member(object, "contexts", contexts);
+
+  JsonObject *selection = json_object_new();
+  json_object_set_boolean_member(selection, "required", capability->selection_required);
+  json_object_set_boolean_member(selection, "multiple", capability->supports_multiple_selection);
+  json_object_set_object_member(object, "selection", selection);
+
+  JsonArray *arguments = json_array_new();
+  for(guint k = 0; k < capability->argument_count; k++)
+  {
+    const dt_capability_argument_t *argument = &capability->arguments[k];
+    JsonObject *item = json_object_new();
+    json_object_set_string_member(item, "name", argument->name);
+    json_object_set_string_member(item, "type", dt_capability_argument_type_name(argument->type));
+    json_object_set_boolean_member(item, "required", argument->required);
+    if(argument->type == DT_CAPABILITY_ARGUMENT_INTEGER
+       || argument->type == DT_CAPABILITY_ARGUMENT_NUMBER)
+    {
+      json_object_set_double_member(item, "minimum", argument->minimum);
+      json_object_set_double_member(item, "maximum", argument->maximum);
+    }
+    if(argument->values)
+      _add_string_array(item, "values", argument->values);
+    if(argument->default_value)
+      json_object_set_string_member(item, "default", argument->default_value);
+    if(argument->description)
+      json_object_set_string_member(item, "description", argument->description);
+    json_array_add_object_element(arguments, item);
+  }
+  json_object_set_array_member(object, "arguments", arguments);
+  json_object_set_string_member(object, "side_effect",
+                                dt_capability_side_effect_name(capability->side_effect));
+
+  JsonObject *lifecycle = json_object_new();
+  json_object_set_boolean_member(lifecycle, "preview", capability->supports_preview);
+  json_object_set_boolean_member(lifecycle, "confirmation", capability->requires_confirmation);
+  json_object_set_boolean_member(lifecycle, "undo", capability->supports_undo);
+  json_object_set_boolean_member(lifecycle, "cancellation", capability->supports_cancellation);
+  json_object_set_object_member(object, "lifecycle", lifecycle);
+  json_object_set_string_member(object, "agent_exposure",
+                                dt_capability_exposure_name(capability->agent_exposure));
+  json_object_set_string_member(object, "navigation_target", capability->navigation_target);
+  return object;
+}
+
+static char *_json_object_string(JsonObject *object)
+{
+  JsonNode *node = json_node_new(JSON_NODE_OBJECT);
+  json_node_take_object(node, object);
+  JsonGenerator *generator = json_generator_new();
+  json_generator_set_root(generator, node);
+  char *json = json_generator_to_data(generator, NULL);
+  g_object_unref(generator);
+  json_node_free(node);
+  return json;
+}
+
+/* 0 means every context; G_MAXUINT means the caller asked for one we do not
+ * have. A client that sends a non-string gets NULL from _arg_string(), which
+ * must not silently widen the search to everything. */
+static guint _capability_context(JsonObject *args)
+{
+  if(!args || !json_object_has_member(args, "context")) return 0;
+  const char *name = _arg_string(args, "context");
+  if(!name || !*name) return G_MAXUINT;
+  if(!g_strcmp0(name, "global")) return DT_CAPABILITY_CONTEXT_GLOBAL;
+  if(!g_strcmp0(name, "library")) return DT_CAPABILITY_CONTEXT_LIBRARY;
+  if(!g_strcmp0(name, "edit")) return DT_CAPABILITY_CONTEXT_EDIT;
+  if(!g_strcmp0(name, "export")) return DT_CAPABILITY_CONTEXT_EXPORT;
+  return G_MAXUINT;
+}
+
+static JsonNode *_tool_capabilities_search(JsonObject *args)
+{
+  const char *query = _arg_string(args, "query");
+  const guint context = _capability_context(args);
+  if(context == G_MAXUINT)
+    return _text_result("capabilities_search: context must be global, library, edit, or export", TRUE);
+
+  dt_capability_match_t matches[32] = { 0 };
+  const int requested =
+    CLAMP(_arg_int(args, "limit", 8), 1, (int)G_N_ELEMENTS(matches));
+  const size_t count = dt_capabilities_search(query, context, matches, requested);
+
+  JsonArray *items = json_array_new();
+  for(size_t k = 0; k < count; k++)
+  {
+    JsonObject *result = json_object_new();
+    json_object_set_int_member(result, "score", matches[k].score);
+    json_object_set_object_member(result, "capability",
+                                  _capability_object(matches[k].descriptor));
+    json_array_add_object_element(items, result);
+  }
+  JsonObject *root = json_object_new();
+  json_object_set_string_member(root, "schema_version", "1.0");
+  json_object_set_array_member(root, "capabilities", items);
+  g_autofree char *json = _json_object_string(root);
+  return _text_result(json, FALSE);
+}
+
+static JsonNode *_tool_capabilities_describe(JsonObject *args)
+{
+  const char *id = _arg_string(args, "id");
+  if(!id) return _text_result("capabilities_describe: requires string 'id'", TRUE);
+  const dt_capability_descriptor_t *capability = dt_capability_get(id);
+  if(!capability) return _text_result("capabilities_describe: unknown capability id", TRUE);
+  g_autofree char *json = _json_object_string(_capability_object(capability));
+  return _text_result(json, FALSE);
+}
+
 // ---------------------------------------------------------------------------
 // registry
 // ---------------------------------------------------------------------------
@@ -507,6 +649,8 @@ typedef struct mcp_handler_t
 // tool behaviour lives in C; the presentation (name/description/inputSchema)
 // is loaded from mcp_tools.json in the data folder and matched here by name
 static const mcp_handler_t _handlers[] = {
+  { "capabilities_search", _tool_capabilities_search },
+  { "capabilities_describe", _tool_capabilities_describe },
   { "list_modules",     _tool_list_modules },
   { "module_schema",    _tool_module_schema },
   { "decode_params",    _tool_decode_params },

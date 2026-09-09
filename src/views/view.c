@@ -21,6 +21,7 @@
 #include "views/view.h"
 #include "bauhaus/bauhaus.h"
 #include "common/collection.h"
+#include "common/capabilities.h"
 #include "common/darktable.h"
 #include "common/debug.h"
 #include "common/focus_peaking.h"
@@ -1933,9 +1934,9 @@ void dt_view_paint_surface(cairo_t *cr,
   else
   {
     if(dev->full_preview)
-      dt_gui_gtk_set_source_rgb(cr, DT_GUI_COLOR_DARKROOM_PREVIEW_BG);
+      dt_gui_gtk_set_source_rgb(cr, dt_gui_image_surround_color(DT_GUI_COLOR_DARKROOM_PREVIEW_BG));
     else
-      dt_gui_gtk_set_source_rgb(cr, DT_GUI_COLOR_DARKROOM_BG);
+      dt_gui_gtk_set_source_rgb(cr, dt_gui_image_surround_color(DT_GUI_COLOR_DARKROOM_BG));
   }
 
   cairo_paint(cr);

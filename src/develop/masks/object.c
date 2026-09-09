@@ -31,6 +31,7 @@
 #include "develop/masks.h"
 #include "develop/openmp_maths.h"
 #include "develop/pixelpipe_hb.h"
+#include "gui/accelerators.h"
 #include "gui/gtk.h"
 #include "imageio/imageio_common.h"
 #include "views/view.h"
@@ -89,6 +90,12 @@ typedef struct _object_data_t
   gboolean dragging;        // TRUE between press and release during click drag
   float drag_start_x;       // press position (preview pipe pixel space)
   float drag_start_y;
+  dt_masks_object_selection_t automatic;
+  dt_seg_point_t automatic_point;
+  gboolean automatic_found;
+  gboolean automatic_pending;   // TRUE between scheduling and running _automatic_apply
+  gboolean invert_selection;
+  int canceled;
   gboolean has_selection;   // TRUE after first click, enables refinement mode
   // vectorization preview (auto-updated after each decode)
   GList *preview_forms;             // GList of dt_masks_form_t* (mask-space pixel coords)
@@ -223,6 +230,7 @@ static void _free_data(dt_masks_form_gui_t *gui)
   if(!d)
     return;
   gui->scratchpad = NULL;
+  g_atomic_int_set(&d->canceled, TRUE);
 
   const int state = g_atomic_int_get(&d->encode_state);
   if(state == ENCODE_RUNNING)
@@ -242,6 +250,97 @@ typedef struct _encode_thread_data_t
   int32_t history_end;     // darkroom history_end (may be ahead of database)
   dt_hash_t distort_hash;  // hash from live darkroom state (for disk cache key)
 } _encode_thread_data_t;
+
+// the model proposes regions without semantic labels; rank them by photographic
+// priors and reject implausible candidates rather than selecting the whole frame
+static float _automatic_score(const float *mask, const uint8_t *rgb,
+                              const int w, const int h, const gboolean sky)
+{
+  if(!mask || !rgb || w <= 0 || h <= 0) return 0.0f;
+  double area = 0, cx = 0, cy = 0, sky_color = 0, texture = 0, pairs = 0;
+  int samples = 0, border = 0, border_samples = 0, top = 0, top_samples = 0;
+  const int step = MAX(1, MAX(w, h) / 128);
+  for(int y = 0; y < h; y += step)
+    for(int x = 0; x < w; x += step)
+    {
+      const size_t k = (size_t)y * w + x;
+      const gboolean inside = isfinite(mask[k]) && mask[k] > 0.5f;
+      samples++;
+      if(x < step || y < step || x + step >= w || y + step >= h)
+      {
+        border_samples++;
+        border += inside;
+      }
+      if(y < step) { top_samples++; top += inside; }
+      if(!inside) continue;
+      area++;
+      cx += (float)x / w;
+      cy += (float)y / h;
+      const int r = rgb[3*k], g = rgb[3*k+1], b = rgb[3*k+2];
+      const int hi = MAX(r, MAX(g, b)), lo = MIN(r, MIN(g, b));
+      if(sky && x + step < w && y + step < h
+         && mask[k + step] > 0.5f && mask[k + (size_t)step * w] > 0.5f)
+      {
+        for(int c = 0; c < 3; c++)
+        {
+          texture += abs(rgb[3*k+c] - rgb[3*(k+step)+c]);
+          texture += abs(rgb[3*k+c] - rgb[3*(k+(size_t)step*w)+c]);
+        }
+        pairs += 6;
+      }
+      sky_color += (b > r + 12 && b >= g && b > 70)
+                   || (lo > 100 && hi - lo < 35);
+    }
+  const float coverage = area / samples;
+  if(coverage < 0.01f || coverage > 0.90f) return 0.0f;
+  cx /= area;
+  cy /= area;
+  const float edge = (float)border / MAX(1, border_samples);
+  if(sky)
+  {
+    const float upper_edge = (float)top / MAX(1, top_samples);
+    const float color = sky_color / area;
+    // branches can occlude most of the upper edge; texture rejects pale
+    // buildings that otherwise satisfy the same color and position cues
+    if(upper_edge < 0.03f || cy > 0.5 || color < 0.55f
+       || pairs == 0 || texture / pairs > 12.0) return 0.0f;
+    return coverage * color * upper_edge * (1.0f - cy);
+  }
+  if(edge > 0.65f) return 0.0f;
+  const float center = 1.0f - hypotf(cx - 0.5f, cy - 0.5f);
+  return sqrtf(coverage) * center * (1.0f - edge);
+}
+
+static void _automatic_prompt(_object_data_t *d)
+{
+  d->automatic_found = FALSE;
+  if(d->automatic == DT_MASKS_OBJECT_MANUAL) return;
+  int w = 0, h = 0;
+  const uint8_t *rgb = dt_seg_get_encoded_rgb(d->seg, &w, &h);
+  if(!rgb || w <= 0 || h <= 0) return;
+  const gboolean sky = d->automatic == DT_MASKS_OBJECT_SKY;
+  float best = 0.0f;
+  // independent prompts must not inherit the preceding candidate's mask
+  for(int y = 0; y < (sky ? 2 : 5); y++)
+    for(int x = 0; x < 5; x++)
+    {
+      if(g_atomic_int_get(&d->canceled)) return;
+      dt_seg_point_t point = { (x + 0.5f) * w / 5.0f,
+                              (y + 0.5f) * h / (sky ? 10.0f : 5.0f), 1 };
+      dt_seg_reset_prev_mask(d->seg);
+      int mw = 0, mh = 0;
+      float *mask = dt_seg_compute_mask(d->seg, &point, 1, &mw, &mh);
+      const float score = mw == w && mh == h ? _automatic_score(mask, rgb, w, h, sky) : 0.0f;
+      if(score > best)
+      {
+        best = score;
+        d->automatic_point = point;
+        d->automatic_found = TRUE;
+      }
+      g_free(mask);
+    }
+  dt_seg_reset_prev_mask(d->seg);
+}
 
 // background thread: loads model, renders image via export pipe, and encodes,
 // does ZERO GLib/GTK calls - only computation + atomic state set,
@@ -341,8 +440,9 @@ static gpointer _encode_thread_func(gpointer data)
     dt_mipmap_cache_release(&buf);
     dt_dev_cleanup(&dev);
     dt_seg_get_encoded_rgb(d->seg, &d->encode_w, &d->encode_h);
-    g_atomic_int_set(&d->encode_state, ENCODE_READY);
     dt_seg_warmup_decoder(d->seg);
+    _automatic_prompt(d);
+    g_atomic_int_set(&d->encode_state, ENCODE_READY);
     return NULL;
   }
 
@@ -410,15 +510,12 @@ static gpointer _encode_thread_func(gpointer data)
                            rgb, out_w, out_h);
   g_free(rgb);
 
-  // signal ready so the user can start placing points; warmup continues
-  // on this thread; _run_decoder joins the thread on the first click to
-  // avoid a race with warmup on the shared segmentation context
-  g_atomic_int_set(&d->encode_state, ok ? ENCODE_READY : ENCODE_ERROR);
-
-  // warm up decoder with real encoder embeddings so the first user click
-  // doesn't pay ORT's lazy-init + arena-sizing cost on the main thread
   if(ok)
+  {
     dt_seg_warmup_decoder(d->seg);
+    _automatic_prompt(d);
+  }
+  g_atomic_int_set(&d->encode_state, ok ? ENCODE_READY : ENCODE_ERROR);
 
   return NULL;
 }
@@ -651,7 +748,8 @@ static void _run_decoder(dt_masks_form_gui_t *gui)
     d->encode_thread = NULL;
   }
 
-  dt_gui_cursor_set_busy();
+  // do not pump GTK events here: a tool change can free gui and its scratchpad
+  if(darktable.gui) dt_control_set_temp_cursor("wait");
 
   const float *gp = dt_masks_dynbuf_buffer(gui->guipoints);
   const float *gpp = dt_masks_dynbuf_buffer(gui->guipoints_payload);
@@ -746,10 +844,12 @@ static void _run_decoder(dt_masks_form_gui_t *gui)
 
   if(mask)
   {
-    // remove disconnected blobs: keep only the component at the seed point
+    // sky and background exclusions can contain disconnected regions
     seed_x = CLAMP(seed_x, 0, mw - 1);
     seed_y = CLAMP(seed_y, 0, mh - 1);
-    _keep_seed_component(mask, mw, mh, threshold, seed_x, seed_y);
+    if(d->automatic != DT_MASKS_OBJECT_SKY
+       && !(d->invert_selection && n_prompt_points > 1))
+      _keep_seed_component(mask, mw, mh, threshold, seed_x, seed_y);
 
     // optional DenseCRF edge refinement using the encoded RGB as guide
     if(d->preview_refine)
@@ -777,12 +877,16 @@ static void _run_decoder(dt_masks_form_gui_t *gui)
       }
     }
 
+    if(d->invert_selection)
+      for(size_t i = 0; i < (size_t)mw * mh; i++)
+        mask[i] = 1.0f - mask[i];
+
     g_free(d->mask);
     d->mask = mask;
     d->mask_w = mw;
     d->mask_h = mh;
   }
-  dt_gui_cursor_clear_busy();
+  if(darktable.gui) dt_control_clear_temp_cursor();
 }
 
 // run vectorization with current preview parameters, store result in scratchpad,
@@ -1197,6 +1301,8 @@ static void _clear_selection(dt_masks_form_gui_t *gui)
 
   // reset selection and preview state
   d->has_selection = FALSE;
+  d->automatic = DT_MASKS_OBJECT_MANUAL;
+  d->invert_selection = FALSE;
   _free_preview_forms(d);
 
   dt_control_queue_redraw_center();
@@ -1378,7 +1484,7 @@ static int _object_events_button_released(dt_iop_module_t *module,
   const float label = (d->has_selection && dt_modifier_is(state, GDK_SHIFT_MASK))
     ? 0.0f : 1.0f;
   dt_masks_dynbuf_add_2(gui->guipoints, d->drag_start_x, d->drag_start_y);
-  dt_masks_dynbuf_add(gui->guipoints_payload, label);
+  dt_masks_dynbuf_add(gui->guipoints_payload, d->invert_selection ? 1.0f - label : label);
   gui->guipoints_count++;
   d->has_selection = TRUE;
 
@@ -1441,6 +1547,57 @@ static gboolean _modifier_poll(gpointer data)
   return G_SOURCE_CONTINUE;
 }
 
+// apply the automatic prompt found by the encoding worker
+//
+// this runs from an idle callback rather than directly from post_expose:
+// the decoder, the vectorization and the mask manager rebuild are all
+// synchronous and must not rebuild widgets during the draw handler
+static gboolean _automatic_apply(gpointer data)
+{
+  (void)data;
+  dt_masks_form_gui_t *gui = darktable.develop ? darktable.develop->form_gui : NULL;
+  _object_data_t *d = _get_data(gui);
+  // the tool may have been closed, or restarted with a fresh scratchpad,
+  // between scheduling this and the main loop getting to it
+  if(!d || !d->automatic_pending)
+    return G_SOURCE_REMOVE;
+  d->automatic_pending = FALSE;
+
+  float wd, ht, iw, ih;
+  dt_masks_get_image_size(&wd, &ht, &iw, &ih);
+  if(!gui->guipoints)
+    gui->guipoints = dt_masks_dynbuf_init(200000, "object guipoints");
+  if(!gui->guipoints_payload)
+    gui->guipoints_payload = dt_masks_dynbuf_init(100000, "object guipoints_payload");
+  if(gui->guipoints && gui->guipoints_payload)
+  {
+    dt_masks_dynbuf_add_2(gui->guipoints,
+                          d->automatic_point.x * wd / d->encode_w,
+                          d->automatic_point.y * ht / d->encode_h);
+    dt_masks_dynbuf_add(gui->guipoints_payload, 1.0f);
+    gui->guipoints_count = 1;
+    d->invert_selection = d->automatic == DT_MASKS_OBJECT_BACKGROUND;
+    _run_decoder(gui);
+    d->has_selection = d->mask != NULL;
+    if(d->mask)
+      _update_preview(d);
+    else
+      _clear_selection(gui);
+  }
+  if(darktable.develop->proxy.masks.module)
+    darktable.develop->proxy.masks.list_change(darktable.develop->proxy.masks.module);
+
+  if(d->has_selection)
+    dt_control_log(_("automatic selection: refine with clicks, right-click to apply"));
+  else
+  {
+    d->automatic = DT_MASKS_OBJECT_MANUAL;
+    dt_control_log(_("no suitable automatic selection; click on object to create mask"));
+  }
+  dt_control_queue_redraw_center();
+  return G_SOURCE_REMOVE;
+}
+
 static void _object_events_post_expose(cairo_t *cr,
                                        const float zoom_scale,
                                        dt_masks_form_gui_t *gui,
@@ -1459,6 +1616,7 @@ static void _object_events_post_expose(cairo_t *cr,
   if(!d)
   {
     d = g_new0(_object_data_t, 1);
+    d->automatic = gui->object_selection;
     d->preview_cleanup = dt_conf_get_int(CONF_OBJECT_CLEANUP_KEY);
     d->preview_smoothing = dt_conf_get_float(CONF_OBJECT_SMOOTHING_KEY);
     d->preview_feather = dt_conf_get_float(CONF_OBJECT_FEATHER_KEY);
@@ -1527,6 +1685,7 @@ static void _object_events_post_expose(cairo_t *cr,
     d->encode_state = ENCODE_IDLE;
     // reset selection, preview, and point state so the new image starts fresh
     d->has_selection = FALSE;
+    d->invert_selection = FALSE;
     _free_preview_forms(d);
     if(gui->guipoints)
       dt_masks_dynbuf_reset(gui->guipoints);
@@ -1585,7 +1744,18 @@ static void _object_events_post_expose(cairo_t *cr,
     g_thread_join(d->encode_thread);
     d->encode_thread = NULL;
     dt_control_log_ack_all();
-    dt_control_log(_("click on object to create mask"));
+    if(d->automatic_found)
+    {
+      d->automatic_pending = TRUE;
+      g_idle_add(_automatic_apply, NULL);
+    }
+    else if(d->automatic != DT_MASKS_OBJECT_MANUAL)
+    {
+      d->automatic = DT_MASKS_OBJECT_MANUAL;
+      dt_control_log(_("no suitable automatic selection; click on object to create mask"));
+    }
+    else
+      dt_control_log(_("click on object to create mask"));
   }
 
   if(g_atomic_int_get(&d->encode_state) == ENCODE_ERROR)
@@ -1991,6 +2161,31 @@ gboolean dt_masks_object_available(void)
   const gboolean available = model && model->status == DT_AI_MODEL_DOWNLOADED;
   dt_ai_model_free(model);
   return available;
+}
+
+GtkWidget *dt_masks_object_selectors(dt_action_t *action,
+                                     const char *section,
+                                     GCallback callback,
+                                     gpointer user_data)
+{
+  // the mask manager and the per-module blending controls both offer this row,
+  // and both have to name the same three msgids for the translations to match
+  GtkWidget *box = dt_gui_hbox(dt_ui_label_new(_("select")));
+  const char *selectors[] = { N_("subject"), N_("sky"), N_("background") };
+  for(int i = 0; i < 3; i++)
+  {
+    GtkWidget *button = gtk_button_new_with_label(_(selectors[i]));
+    gtk_widget_set_tooltip_text
+      (button,
+       _("automatic selection using position and color heuristics\n"
+         "refine with clicks, then right-click to apply"));
+    g_object_set_data(G_OBJECT(button), "object-selection",
+                      GINT_TO_POINTER(DT_MASKS_OBJECT_SUBJECT + i));
+    dt_action_define(action, section, selectors[i], button, &dt_action_def_button);
+    g_signal_connect_data(G_OBJECT(button), "clicked", callback, user_data, NULL, 0);
+    dt_gui_box_add(box, button);
+  }
+  return box;
 }
 
 // clang-format off

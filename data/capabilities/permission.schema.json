@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://darktable.org/schemas/permission/v1",
+  "title": "darktable permission request",
+  "type": "object",
+  "required": ["schema_version", "permission", "scope", "reason", "status"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "permission": { "enum": ["pixels", "filename", "exif", "location", "catalog", "library_mutation", "file_output", "destructive"] },
+    "scope": { "type": "object" },
+    "reason": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["required", "granted_once", "granted_session", "denied"] },
+    "provider": { "type": "string" }
+  },
+  "additionalProperties": false
+}

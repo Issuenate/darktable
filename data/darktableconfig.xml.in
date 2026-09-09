@@ -147,6 +147,47 @@
     <shortdescription>show welcome screen on next run</shortdescription>
     <longdescription>display the welcome setup screen the next time darktable is launched</longdescription>
   </dtconfig>
+  <dtconfig prefs="misc" section="interface" common="yes">
+    <name>ui/experience_mode</name>
+    <type>
+      <enum>
+        <option>auto</option>
+        <option>essentials</option>
+        <option>advanced</option>
+      </enum>
+    </type>
+    <default>auto</default>
+    <shortdescription>interface</shortdescription>
+    <longdescription>the guided interface is the simple one, with the three-step workflow; the complete interface is darktable's full set of panels and modules, which the guided one does not expose (masks, styles, module order and most processing modules). this preference is the only way between them</longdescription>
+  </dtconfig>
+  <dtconfig prefs="misc" section="interface" common="yes">
+    <name>ui/essentials_surround</name>
+    <type>
+      <enum>
+        <option>graphite</option>
+        <option>charcoal</option>
+        <option>slate</option>
+        <option>neutral</option>
+      </enum>
+    </type>
+    <default>graphite</default>
+    <shortdescription>background behind the photo</shortdescription>
+    <longdescription>shade of the neutral surround drawn behind a photo in the essentials interface; neutral keeps darktable's middle grey, which is the most accurate for judging color</longdescription>
+  </dtconfig>
+  <dtconfig>
+    <name>ui/advanced_modulegroups_preset</name>
+    <type>string</type>
+    <default></default>
+    <shortdescription>advanced editor layout</shortdescription>
+    <longdescription>remember the editor layout while the essentials interface is active</longdescription>
+  </dtconfig>
+  <dtconfig>
+    <name>ui/advanced_modulegroups_group</name>
+    <type>int</type>
+    <default>0</default>
+    <shortdescription>advanced editor group</shortdescription>
+    <longdescription>remember the selected editor group while the essentials interface is active</longdescription>
+  </dtconfig>
   <dtconfig prefs="misc" section="interface">
     <name>accel/load_defaults</name>
     <type>bool</type>

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://darktable.org/schemas/error/v1",
+  "title": "darktable capability error",
+  "type": "object",
+  "required": ["schema_version", "code", "message", "retryable"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "code": { "enum": ["invalid_arguments", "ambiguous_request", "selection_required", "permission_denied", "stale_plan", "already_committed", "catalog_locked", "cancelled", "execution_failed", "verification_failed"] },
+    "message": { "type": "string", "minLength": 1 },
+    "retryable": { "type": "boolean" },
+    "details": { "type": "object" }
+  },
+  "additionalProperties": false
+}
