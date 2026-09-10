@@ -187,6 +187,13 @@ void dt_history_hash_unset_mipmap(const dt_imgid_t imgid);
 void dt_history_hash_write(const dt_imgid_t imgid,
                            const dt_history_hash_values_t *const hash);
 
+/** hash the first history_end history rows of an image, the way the stored
+    hashes were computed from the rows existing at their write time; returns
+    the length, 0 without history. caller g_free()s *hash */
+gsize dt_history_hash_compute_prefix(const dt_imgid_t imgid,
+                                     const int history_end,
+                                     guint8 **hash);
+
 /** read hash values from db */
 void dt_history_hash_read(const dt_imgid_t imgid,
                           dt_history_hash_values_t *hash);

@@ -1568,7 +1568,14 @@ GList *dt_history_duplicate(GList *hist)
 }
 
 // if the image has no history return 0
+/* prefix: hash the first history_end rows rather than the image's own
+ * history end. The stored hashes take rows with num <= history_end, which at
+ * write time are exactly the rows that exist, so a prefix of history_end
+ * rows (num < history_end, as the masks query below already does) hashes the
+ * same as the state the auto hash was written from */
 static gsize _history_hash_compute_from_db(const dt_imgid_t imgid,
+                                           int history_end,
+                                           const gboolean prefix,
                                            guint8 **hash)
 {
   if(!dt_is_valid_imgid(imgid)) return 0;
@@ -1578,18 +1585,21 @@ static gsize _history_hash_compute_from_db(const dt_imgid_t imgid,
 
   sqlite3_stmt *stmt;
 
-  // get history end
-  int history_end = 0;
-  DT_DEBUG_SQLITE3_PREPARE_V2(dt_database_get(darktable.db),
-                              "SELECT history_end FROM main.images WHERE id = ?1",
-                              -1, &stmt, NULL);
-  DT_DEBUG_SQLITE3_BIND_INT(stmt, 1, imgid);
-  if(sqlite3_step(stmt) == SQLITE_ROW)
+  if(!prefix)
   {
-    if(sqlite3_column_type(stmt, 0) != SQLITE_NULL)
-      history_end = sqlite3_column_int(stmt, 0);
+    // get history end
+    history_end = 0;
+    DT_DEBUG_SQLITE3_PREPARE_V2(dt_database_get(darktable.db),
+                                "SELECT history_end FROM main.images WHERE id = ?1",
+                                -1, &stmt, NULL);
+    DT_DEBUG_SQLITE3_BIND_INT(stmt, 1, imgid);
+    if(sqlite3_step(stmt) == SQLITE_ROW)
+    {
+      if(sqlite3_column_type(stmt, 0) != SQLITE_NULL)
+        history_end = sqlite3_column_int(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
   }
-  sqlite3_finalize(stmt);
 
   // get history. the active history for an image are all the latest
   // operations (MAX(num)) which are enabled. this is important here
@@ -1599,11 +1609,17 @@ static gsize _history_hash_compute_from_db(const dt_imgid_t imgid,
   // clang-format off
   DT_DEBUG_SQLITE3_PREPARE_V2
     (dt_database_get(darktable.db),
-     "SELECT operation, op_params, blendop_params, enabled, MAX(num)"
-     " FROM main.history"
-     " WHERE imgid = ?1 AND num <= ?2"
-     " GROUP BY operation, multi_priority"
-     " ORDER BY num",
+     prefix
+     ? "SELECT operation, op_params, blendop_params, enabled, MAX(num)"
+       " FROM main.history"
+       " WHERE imgid = ?1 AND num < ?2"
+       " GROUP BY operation, multi_priority"
+       " ORDER BY num"
+     : "SELECT operation, op_params, blendop_params, enabled, MAX(num)"
+       " FROM main.history"
+       " WHERE imgid = ?1 AND num <= ?2"
+       " GROUP BY operation, multi_priority"
+       " ORDER BY num",
      -1, &stmt, NULL);
   // clang-format on
   DT_DEBUG_SQLITE3_BIND_INT(stmt, 1, imgid);
@@ -1705,7 +1721,7 @@ void dt_history_hash_write_from_history(const dt_imgid_t imgid,
   if(!dt_is_valid_imgid(imgid)) return;
 
   guint8 *hash = NULL;
-  gsize hash_len = _history_hash_compute_from_db(imgid, &hash);
+  gsize hash_len = _history_hash_compute_from_db(imgid, -1, FALSE, &hash);
   if(hash_len)
   {
     char *fields = NULL;
@@ -1786,6 +1802,14 @@ void dt_history_hash_write(const dt_imgid_t imgid,
     g_free(hash->auto_apply);
     g_free(hash->current);
   }
+}
+
+gsize dt_history_hash_compute_prefix(const dt_imgid_t imgid,
+                                     const int history_end,
+                                     guint8 **hash)
+{
+  *hash = NULL;
+  return _history_hash_compute_from_db(imgid, history_end, TRUE, hash);
 }
 
 void dt_history_hash_read(const dt_imgid_t imgid,

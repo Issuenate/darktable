@@ -612,6 +612,37 @@ static void _before_reset(void)
   _before_drop_buffer();
 }
 
+/* the history step "before" shows: where darktable's own setup of the image
+ * ends, i.e. the mandatory modules plus the auto-applied presets. Step 0 is
+ * the flat raw without the exposure lift and the tone mapper, which is not
+ * what "before my edits" means to anyone. That step is found as the first
+ * prefix of the history whose hash is the auto hash recorded when the image
+ * was first opened; a compressed or reordered history has no such prefix and
+ * falls back to step 0 */
+static int _before_history_end(dt_develop_t *dev)
+{
+  const dt_imgid_t imgid = dev->image_storage.id;
+  dt_history_hash_values_t stored = { 0 };
+  dt_history_hash_read(imgid, &stored);
+
+  int step = 0;
+  if(stored.auto_apply && stored.auto_apply_len)
+  {
+    const int items = g_list_length(dev->history);
+    for(int k = 1; k <= items && !step; k++)
+    {
+      guint8 *hash = NULL;
+      const gsize len = dt_history_hash_compute_prefix(imgid, k, &hash);
+      if(len == (gsize)stored.auto_apply_len
+         && !memcmp(hash, stored.auto_apply, len))
+        step = k;
+      g_free(hash);
+    }
+  }
+  dt_history_hash_free(&stored);
+  return step;
+}
+
 static void _before_expose(dt_develop_t *dev,
                            cairo_t *cri,
                            const int32_t width,
@@ -626,9 +657,9 @@ static void _before_expose(dt_develop_t *dev,
     _before_drop_buffer();
     // synchronous, as in the snapshots module: a hold gesture can take the
     // fraction of a second the pipe needs at screen size
-    dt_dev_image(imgid, width, height, 0, &_before.buf, &_before.scale,
-                 &_before.width, &_before.height, _before.zoom_pos, -1, NULL,
-                 DT_DEVICE_NONE, FALSE, FALSE);
+    dt_dev_image(imgid, width, height, _before_history_end(dev), &_before.buf,
+                 &_before.scale, &_before.width, &_before.height,
+                 _before.zoom_pos, -1, NULL, DT_DEVICE_NONE, FALSE, FALSE);
     _before.imgid = imgid;
     _before.ctx = ctx;
   }
