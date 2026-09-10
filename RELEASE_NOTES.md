@@ -98,6 +98,10 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Remove unwanted objects with a local LaMa model in retouch, using drawn
+  shapes without choosing a source region. Requires an installed compatible
+  AI model and operates on the original image scale.
+
 - Import Lightroom XMP develop presets through the styles module. Exposure,
   grain, split toning, clarity, basic vignetting, composite and per-channel
   point curves, parametric curves, and eight-band HSL adjustments are converted
