@@ -84,9 +84,11 @@ changes (where available).
   It presents darktable as three steps - add photos, choose, edit &
   export - with a short left-hand list of destinations, a contextual
   panel for rating, color labels and albums, and an editor built from
-  plain-language sections such as light, color and detail. A "find
-  anything" box searches everything the interface can do by everyday
-  phrase, for example "make brighter" or "fix the horizon". Export
+  plain-language sections such as light, color and detail. The editor
+  keeps a filmstrip along the bottom: click a thumbnail or press left
+  or right to move to another photo, and drag the strip's top edge to
+  change the thumbnail size. Press and hold on the photo to see it as
+  it was before any edit. Export
   asks four questions - where, what format, how large, how good - and
   offers the complete export module behind "more options...". The
   controls are darktable's own, so history, undo, sidecars and
@@ -97,6 +99,11 @@ changes (where available).
   can be picked separately, under the same preferences section.
 
 ## UI/UX Improvements
+
+- Hold the backslash key in the darkroom to see the photo as it was
+  before any edit, at the current zoom; release to return to the edit.
+  The shortcut is called "show original" and can be changed like any
+  other.
 
 - Import Lightroom XMP develop presets through the styles module. Exposure,
   grain, split toning, clarity, basic vignetting, composite and per-channel

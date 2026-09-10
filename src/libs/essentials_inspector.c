@@ -107,7 +107,12 @@ static void _update(dt_lib_module_t *self)
   dt_lib_essentials_inspector_t *d = self->data;
   const int count = dt_act_on_get_images_nb(FALSE, FALSE);
   const dt_imgid_t imgid = dt_act_on_get_main_image();
-  const gboolean valid = count > 0 && dt_is_valid_imgid(imgid);
+  /* the cache get can fail even on a valid id, see image_cache.c:253; an
+   * image removed while still hovered must fall back to the empty state */
+  const dt_image_t *image = count > 0 && dt_is_valid_imgid(imgid)
+                                ? dt_image_cache_get(imgid, 'r')
+                                : NULL;
+  const gboolean valid = image != NULL;
   gtk_widget_set_visible(d->empty, !valid);
   gtk_widget_set_visible(d->content, valid);
   gtk_widget_set_sensitive(d->open_edit, valid);
@@ -115,7 +120,6 @@ static void _update(dt_lib_module_t *self)
   if(!valid)
     return;
 
-  const dt_image_t *image = dt_image_cache_get(imgid, 'r');
   char datetime[128] = "";
   dt_datetime_img_to_local(datetime, sizeof(datetime), image, FALSE);
   gtk_label_set_text(GTK_LABEL(d->filename), image->filename);
@@ -531,6 +535,14 @@ void gui_init(dt_lib_module_t *self)
   gtk_box_pack_end(GTK_BOX(d->content), d->export, FALSE, FALSE, 0);
   gtk_box_pack_end(GTK_BOX(d->content), d->open_edit, FALSE, FALSE, 0);
   gtk_box_pack_start(GTK_BOX(self->widget), d->content, TRUE, TRUE, 0);
+
+  /* show the whole tree once, then keep later show-all passes away from the
+   * two states: views/view.c:415 show-alls the module on every view change,
+   * which revealed both at once, and nothing reran _update() until the
+   * selection changed */
+  gtk_widget_show_all(self->widget);
+  gtk_widget_set_no_show_all(d->empty, TRUE);
+  gtk_widget_set_no_show_all(d->content, TRUE);
 
   DT_CONTROL_SIGNAL_HANDLE(DT_SIGNAL_SELECTION_CHANGED, _selection_changed);
   DT_CONTROL_SIGNAL_HANDLE(DT_SIGNAL_MOUSE_OVER_IMAGE_CHANGE,
