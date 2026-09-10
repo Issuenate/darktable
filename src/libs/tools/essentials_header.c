@@ -28,9 +28,6 @@ typedef struct dt_lib_essentials_header_t
   dt_lib_module_t *self;
   GtkWidget *guided;
   GtkWidget *stages[3];
-  GtkWidget *search;
-  GtkWidget *popover;
-  GtkWidget *results;
   gboolean saved_left_panel;
   gboolean advanced_left_panel_visible;
   gboolean saved_center_panels;
@@ -58,7 +55,8 @@ static gboolean _essentials_lighttable_module(const char *name)
 static gboolean _essentials_darkroom_module(const char *name)
 {
   static const char *const visible[] = {"essentials_header", "modulegroups",
-                                        "histogram", "backgroundjobs", NULL};
+                                        "histogram", "filmstrip",
+                                        "backgroundjobs", NULL};
   for(const char *const *item = visible; *item; item++)
     if(!g_strcmp0(name, *item))
       return TRUE;
@@ -102,7 +100,8 @@ static void _refresh_editor_experience(void);
  * Advanced gets its own layout back untouched. */
 static void _apply_panel_overrides(dt_lib_essentials_header_t *d,
                                    const gboolean essentials,
-                                   const gboolean library)
+                                   const gboolean library,
+                                   const gboolean edit)
 {
   if(essentials)
   {
@@ -119,7 +118,10 @@ static void _apply_panel_overrides(dt_lib_essentials_header_t *d,
     dt_ui_panel_show(darktable.gui->ui, DT_UI_PANEL_CENTER_TOP, FALSE, FALSE);
     dt_ui_panel_show(darktable.gui->ui, DT_UI_PANEL_CENTER_BOTTOM, FALSE,
                      FALSE);
-    dt_ui_panel_show(darktable.gui->ui, DT_UI_PANEL_BOTTOM, FALSE, FALSE);
+    /* the bottom panel holds the filmstrip in the editor, which is how the
+     * user moves between photos there; in the library it holds the timeline,
+     * which the guided flow does without */
+    dt_ui_panel_show(darktable.gui->ui, DT_UI_PANEL_BOTTOM, edit, FALSE);
   }
   else if(d->saved_center_panels)
   {
@@ -183,30 +185,35 @@ static gboolean _apply_experience(gpointer user_data)
   const dt_view_type_flags_t current_view = dt_view_get_current();
   const gboolean library = current_view == DT_VIEW_LIGHTTABLE;
   const gboolean edit = current_view == DT_VIEW_DARKROOM;
-  gtk_widget_set_visible(d->guided, essentials);
+  /* the guided experience only has a library stage and an edit stage: a view
+   * reached by shortcut (map, print, tethering) gets the full interface, so
+   * nobody lands on a screen whose modules were all hidden */
+  const gboolean facade = essentials && (library || edit);
+  gtk_widget_set_visible(d->guided, facade);
   GtkWidget *main_window = dt_ui_main_window(darktable.gui->ui);
-  if(essentials)
+  if(facade)
     dt_gui_add_class(main_window, "essentials-ui");
   else
     dt_gui_remove_class(main_window, "essentials-ui");
-  _set_panel_class(DT_UI_CONTAINER_PANEL_LEFT_CENTER, "left", essentials);
-  _set_panel_class(DT_UI_CONTAINER_PANEL_RIGHT_CENTER, "right", essentials);
+  _set_panel_class(DT_UI_CONTAINER_PANEL_LEFT_CENTER, "left", facade);
+  _set_panel_class(DT_UI_CONTAINER_PANEL_RIGHT_CENTER, "right", facade);
 
-  _apply_panel_overrides(d, essentials, library);
+  _apply_panel_overrides(d, facade, library, edit);
 
-  _apply_module_visibility(essentials, library, edit);
+  _apply_module_visibility(facade, library, edit);
 
   /* The darkroom builds image-operation expanders after library modules enter
    * the view. Reapply the Essentials facade once the shell is mapped so that
    * GTK's final show-all pass cannot reveal the technical module list. */
-  if(essentials && edit)
+  if(facade && edit)
     _refresh_editor_experience();
 
   for(int k = 0; k < 3; k++)
     gtk_style_context_remove_class(gtk_widget_get_style_context(d->stages[k]),
                                    "active");
-  gtk_style_context_add_class(
-      gtk_widget_get_style_context(d->stages[library ? 1 : 2]), "active");
+  if(facade)
+    gtk_style_context_add_class(
+        gtk_widget_get_style_context(d->stages[library ? 1 : 2]), "active");
   return G_SOURCE_REMOVE;
 }
 
@@ -258,7 +265,6 @@ static void _activate_capability(dt_lib_essentials_header_t *d,
 {
   if(!id || !dt_capability_get(id))
     return;
-  gtk_widget_hide(d->popover);
 
   if(!g_strcmp0(id, "library.add_photos"))
   {
@@ -310,74 +316,6 @@ static void _activate_capability(dt_lib_essentials_header_t *d,
   }
 }
 
-static void _result_clicked(GtkButton *button, dt_lib_essentials_header_t *d)
-{
-  _activate_capability(d, g_object_get_data(G_OBJECT(button), "capability-id"));
-}
-
-static void _clear_results(dt_lib_essentials_header_t *d)
-{
-  GList *children = gtk_container_get_children(GTK_CONTAINER(d->results));
-  for(GList *item = children; item; item = g_list_next(item))
-    gtk_widget_destroy(GTK_WIDGET(item->data));
-  g_list_free(children);
-}
-
-static void _refresh_results(dt_lib_essentials_header_t *d)
-{
-  _clear_results(d);
-  const char *query = gtk_entry_get_text(GTK_ENTRY(d->search));
-  if(!query || !*query)
-  {
-    gtk_widget_hide(d->popover);
-    return;
-  }
-
-  dt_capability_match_t matches[6] = {0};
-  const size_t count =
-      dt_capabilities_search(query, 0, matches, G_N_ELEMENTS(matches));
-  for(size_t k = 0; k < count; k++)
-  {
-    const dt_capability_descriptor_t *capability = matches[k].descriptor;
-    GtkWidget *button = gtk_button_new();
-    GtkWidget *copy = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-    GtkWidget *title = gtk_label_new(_(capability->name));
-    GtkWidget *description = gtk_label_new(_(capability->description));
-    gtk_widget_set_halign(title, GTK_ALIGN_START);
-    gtk_widget_set_halign(description, GTK_ALIGN_START);
-    gtk_label_set_ellipsize(GTK_LABEL(description), PANGO_ELLIPSIZE_END);
-    gtk_style_context_add_class(gtk_widget_get_style_context(title),
-                                "capability-title");
-    gtk_style_context_add_class(gtk_widget_get_style_context(description),
-                                "capability-description");
-    gtk_box_pack_start(GTK_BOX(copy), title, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(copy), description, FALSE, FALSE, 0);
-    gtk_container_add(GTK_CONTAINER(button), copy);
-    g_object_set_data(G_OBJECT(button), "capability-id",
-                      (gpointer)capability->id);
-    g_signal_connect(button, "clicked", G_CALLBACK(_result_clicked), d);
-    gtk_box_pack_start(GTK_BOX(d->results), button, FALSE, FALSE, 0);
-  }
-  gtk_widget_show_all(d->results);
-  gtk_widget_show(d->popover);
-}
-
-static void _search_changed(GtkEditable *editable,
-                            dt_lib_essentials_header_t *d)
-{
-  (void)editable;
-  _refresh_results(d);
-}
-
-static void _search_activate(GtkEntry *entry, dt_lib_essentials_header_t *d)
-{
-  (void)entry;
-  dt_capability_match_t match = {0};
-  if(dt_capabilities_search(gtk_entry_get_text(GTK_ENTRY(d->search)), 0,
-                             &match, 1) == 1)
-    _activate_capability(d, match.descriptor->id);
-}
-
 static void _stage_clicked(GtkButton *button, dt_lib_essentials_header_t *d)
 {
   const int stage =
@@ -411,8 +349,13 @@ static void _refresh_editor_experience(void)
 
 static void _queue_apply(dt_lib_essentials_header_t *d)
 {
+  /* above GTK's paint cycle (GDK_PRIORITY_REDRAW = G_PRIORITY_HIGH_IDLE + 20):
+   * a default-priority idle runs after the frame that follows the show-all in
+   * views/view.c:415, so the wrong interface was drawn once before the facade
+   * hid it again */
   if(!d->pending_apply)
-    d->pending_apply = g_idle_add(_apply_experience, d);
+    d->pending_apply =
+        g_idle_add_full(G_PRIORITY_HIGH_IDLE, _apply_experience, d, NULL);
 }
 
 static void _view_changed(gpointer instance, dt_view_t *old_view,
@@ -486,22 +429,6 @@ void gui_init(dt_lib_module_t *self)
     gtk_box_pack_start(GTK_BOX(d->guided), d->stages[k], FALSE, FALSE, 0);
   }
 
-  d->search = gtk_search_entry_new();
-  gtk_widget_set_name(d->search, "essentials-search");
-  gtk_widget_set_size_request(d->search, DT_PIXEL_APPLY_DPI(500), -1);
-  gtk_entry_set_placeholder_text(GTK_ENTRY(d->search), _("find anything"));
-  gtk_widget_set_tooltip_text(d->search, _("find tools and actions (ctrl+k)"));
-  atk_object_set_name(gtk_widget_get_accessible(d->search), _("find anything"));
-  g_signal_connect(d->search, "changed", G_CALLBACK(_search_changed), d);
-  g_signal_connect(d->search, "activate", G_CALLBACK(_search_activate), d);
-
-  d->popover = gtk_popover_new(d->search);
-  gtk_widget_set_name(d->popover, "essentials-search-results");
-  gtk_popover_set_position(GTK_POPOVER(d->popover), GTK_POS_BOTTOM);
-  d->results = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-  gtk_widget_set_size_request(d->results, DT_PIXEL_APPLY_DPI(380), -1);
-  gtk_container_add(GTK_CONTAINER(d->popover), d->results);
-
   GtkWidget *export_button = gtk_button_new_with_label(_("export"));
   gtk_widget_set_name(export_button, "essentials-header-export");
   gtk_widget_set_tooltip_text(export_button, _("export selected photos"));
@@ -511,20 +438,13 @@ void gui_init(dt_lib_module_t *self)
   dt_action_define(DT_ACTION(self), NULL, N_("export"), export_button,
                    &dt_action_def_button);
 
-  gtk_widget_set_halign(d->guided, GTK_ALIGN_CENTER);
-  gtk_box_pack_start(GTK_BOX(self->widget), d->guided, FALSE, FALSE, 0);
-
-  GtkWidget *search_line = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
-  gtk_box_pack_start(GTK_BOX(search_line), d->search, TRUE, TRUE, 0);
-  GtkWidget *header_actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-  gtk_box_pack_start(GTK_BOX(header_actions), export_button, FALSE, FALSE, 0);
-  gtk_box_pack_end(GTK_BOX(search_line), header_actions, FALSE, FALSE, 0);
-  gtk_box_pack_start(GTK_BOX(self->widget), search_line, FALSE, FALSE, 0);
-
-  dt_action_t *search_action =
-      dt_action_define(DT_ACTION(self), NULL, N_("find anything"), d->search,
-                       &dt_action_def_entry);
-  dt_shortcut_register(search_action, 0, 0, GDK_KEY_k, GDK_CONTROL_MASK);
+  /* one row: the stages in the top-left corner, export at the right edge.
+   * Stacking them was a third of the screen height on a laptop */
+  GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+  gtk_box_pack_start(GTK_BOX(row), d->guided, FALSE, FALSE, 0);
+  gtk_box_pack_end(GTK_BOX(row), export_button, FALSE, FALSE, 0);
+  gtk_widget_set_valign(export_button, GTK_ALIGN_CENTER);
+  gtk_box_pack_start(GTK_BOX(self->widget), row, FALSE, FALSE, 0);
 
   DT_CONTROL_SIGNAL_HANDLE(DT_SIGNAL_VIEWMANAGER_VIEW_CHANGED, _view_changed);
   /* The main window outlives this module, so the handler has to be taken back

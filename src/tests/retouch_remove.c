@@ -77,6 +77,10 @@ static void _check_model(const char *package, const char *directory)
   char *error = dt_ai_models_install_local(package);
   if(error) g_error("model install: %s", error);
   dt_iop_retouch_params_t p = { 0 };
+  dt_ai_models_set_active_for_task("inpaint", "unavailable-model");
+  g_assert_false(_remove_model_ready(&p));
+  g_assert_cmpstr(p.inpaint_model, ==, "");
+  dt_ai_models_set_active_for_task("inpaint", "inpaint-lama-carve-512-v1");
   g_assert_true(_remove_model_ready(&p));
   g_assert_cmpstr(p.inpaint_model, ==, "inpaint-lama-carve-512-v1");
   dt_ai_models_set_active_for_task("inpaint", NULL);

@@ -411,8 +411,11 @@ static gboolean _remove_model_ready(dt_iop_retouch_params_t *p)
   if(!p->inpaint_model[0])
   {
     char *id = dt_ai_models_get_active_for_task("inpaint");
-    if(id && strlen(id) < sizeof(p->inpaint_model))
+    char *path = id && strlen(id) < sizeof(p->inpaint_model)
+      ? dt_ai_models_get_path(id) : NULL;
+    if(path)
       g_strlcpy(p->inpaint_model, id, sizeof(p->inpaint_model));
+    g_free(path);
     g_free(id);
   }
   char *path = dt_ai_models_get_path(p->inpaint_model);

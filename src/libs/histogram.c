@@ -19,6 +19,7 @@
 
 #include "common/darktable.h"
 #include "common/color_picker.h"
+#include "dtgtk/drawingarea.h"
 #include "gui/accelerators.h"
 #include "scopes.h"
 #include "scopes/vectorscope.h"
@@ -673,6 +674,14 @@ void view_enter(struct dt_lib_module_t *self,
   if(new_view->view(new_view) == DT_VIEW_DARKROOM)
   {
     DT_CONTROL_SIGNAL_HANDLE(DT_SIGNAL_DEVELOP_PREVIEW_PIPE_FINISHED, _lib_histogram_preview_updated_callback);
+
+    /* the guided editor keeps the scope compact, at the floor the essentials
+     * theme sets for #main-histogram: at the default 180px it pushed the first
+     * adjustments below the fold on a laptop. The complete interface keeps the
+     * user's own height untouched */
+    const int height = dt_conf_get_int("plugins/darkroom/histogram/graphheight");
+    dtgtk_drawing_area_set_height(s->scope_draw,
+                                  dt_essentials_mode_is_active() ? MIN(height, 132) : height);
   }
   // button box should be hidden when enter view, unless mouse is over
   // histogram, in which case gtk kindly generates enter events

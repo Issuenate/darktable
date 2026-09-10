@@ -557,6 +557,107 @@ static void _view_paint_surface(cairo_t *cr,
   dt_pthread_mutex_unlock(&p->backbuf_mutex);
 }
 
+/* "before": the photo as it was before any edit, rendered at history step 0
+ * the way the snapshots module renders a snapshot, and painted over the edited
+ * image while a key or, in essentials, the primary button is held down */
+typedef struct dt_darkroom_before_t
+{
+  gboolean shown;
+  guint hold_timeout;
+  double press_x, press_y;
+  dt_imgid_t imgid;
+  dt_view_context_t ctx;
+  uint8_t *buf;
+  float scale;
+  size_t width, height;
+  dt_dev_zoom_pos_t zoom_pos;
+} dt_darkroom_before_t;
+
+static dt_darkroom_before_t _before = { 0 };
+
+static void _before_drop_buffer(void)
+{
+  dt_free_align(_before.buf);
+  _before.buf = NULL;
+  _before.imgid = NO_IMGID;
+}
+
+static void _before_set_shown(const gboolean shown)
+{
+  if(_before.shown == shown) return;
+  _before.shown = shown;
+  dt_control_queue_redraw_center();
+}
+
+static void _before_cancel_hold(void)
+{
+  if(_before.hold_timeout)
+  {
+    g_source_remove(_before.hold_timeout);
+    _before.hold_timeout = 0;
+  }
+}
+
+static gboolean _before_hold_elapsed(gpointer data)
+{
+  _before.hold_timeout = 0;
+  _before_set_shown(TRUE);
+  return G_SOURCE_REMOVE;
+}
+
+static void _before_reset(void)
+{
+  _before_cancel_hold();
+  _before.shown = FALSE;
+  _before_drop_buffer();
+}
+
+static void _before_expose(dt_develop_t *dev,
+                           cairo_t *cri,
+                           const int32_t width,
+                           const int32_t height)
+{
+  if(!_before.shown) return;
+
+  const dt_imgid_t imgid = dev->image_storage.id;
+  const dt_view_context_t ctx = dt_view_get_context_hash();
+  if(!_before.buf || _before.imgid != imgid || _before.ctx != ctx)
+  {
+    _before_drop_buffer();
+    // synchronous, as in the snapshots module: a hold gesture can take the
+    // fraction of a second the pipe needs at screen size
+    dt_dev_image(imgid, width, height, 0, &_before.buf, &_before.scale,
+                 &_before.width, &_before.height, _before.zoom_pos, -1, NULL,
+                 DT_DEVICE_NONE, FALSE, FALSE);
+    _before.imgid = imgid;
+    _before.ctx = ctx;
+  }
+  if(!_before.buf) return;
+
+  cairo_save(cri);
+  dt_view_paint_surface(cri, width, height, &dev->full, DT_WINDOW_MAIN,
+                        _before.buf, _before.scale, _before.width,
+                        _before.height, _before.zoom_pos);
+  cairo_restore(cri);
+
+  PangoLayout *layout = pango_cairo_create_layout(cri);
+  PangoFontDescription *desc = dt_gui_get_font();
+  pango_font_description_set_absolute_size(desc, DT_PIXEL_APPLY_DPI(14.0f) * PANGO_SCALE);
+  pango_layout_set_font_description(layout, desc);
+  pango_layout_set_text(layout, _("before"), -1);
+  PangoRectangle ink;
+  pango_layout_get_pixel_extents(layout, NULL, &ink);
+  const double pad = DT_PIXEL_APPLY_DPI(8.0f);
+  cairo_set_source_rgba(cri, 0.0, 0.0, 0.0, 0.6);
+  cairo_rectangle(cri, pad, pad, ink.width + 2.0 * pad, ink.height + pad);
+  cairo_fill(cri);
+  cairo_set_source_rgb(cri, 1.0, 1.0, 1.0);
+  cairo_move_to(cri, 2.0 * pad, 1.5 * pad);
+  pango_cairo_show_layout(cri, layout);
+  pango_font_description_free(desc);
+  g_object_unref(layout);
+}
+
 /* drag&drop hint overlays
    When an external file drag enters the darkroom, we paint a hint on the
    center view ("drop XMP sidecars here") and on the filmstrip ("drop images
@@ -781,6 +882,7 @@ void expose(dt_view_t *self,
   {
     // draw image
     _view_paint_surface(cri, width, height, port, DT_WINDOW_MAIN);
+    _before_expose(dev, cri, width, height);
     // clean up cached rendering; do this unconditionally in case user toggles the preference
     if(darktable.gui->surface)
     {
@@ -2866,6 +2968,31 @@ const dt_action_def_t dt_action_def_preview
       dt_action_elements_hold,
       NULL, TRUE };
 
+static float _action_process_before(gpointer target,
+                                    const dt_action_element_t element,
+                                    const dt_action_effect_t effect,
+                                    const float move_size)
+{
+  if(DT_PERFORM_ACTION(move_size))
+  {
+    if(_before.shown)
+    {
+      if(effect != DT_ACTION_EFFECT_ON)
+        _before_set_shown(FALSE);
+    }
+    else if(effect != DT_ACTION_EFFECT_OFF)
+      _before_set_shown(TRUE);
+  }
+
+  return (float)_before.shown;
+}
+
+static const dt_action_def_t _action_def_before
+  = { N_("before"),
+      _action_process_before,
+      dt_action_elements_hold,
+      NULL, TRUE };
+
 static float _action_process_move(gpointer target,
                                   const dt_action_element_t element,
                                   const dt_action_effect_t effect,
@@ -2875,6 +3002,15 @@ static float _action_process_move(gpointer target,
 
   if(DT_PERFORM_ACTION(move_size))
   {
+    /* essentials: left and right walk the filmstrip, as they walk the library
+     * grid; a zoomed image is panned with the mouse there. The complete
+     * interface keeps its panning binding untouched */
+    if(target && dt_essentials_mode_is_active())
+    {
+      _dev_jump_image(dev, effect == DT_ACTION_EFFECT_DOWN ? -1 : 1, TRUE);
+      return 0;
+    }
+
     // For each cursor press, move fifth of screen by default
     float factor = 0.2f * move_size;
     if(effect == DT_ACTION_EFFECT_DOWN)
@@ -3719,6 +3855,10 @@ void gui_init(dt_view_t *self)
   ac = dt_action_define(sa, NULL, N_("full preview"), NULL, &dt_action_def_preview);
   dt_shortcut_register(ac, 0, DT_ACTION_EFFECT_HOLD, GDK_KEY_w, 0);
 
+  // hold to compare with the photo before any edit
+  ac = dt_action_define(sa, NULL, N_("show original"), NULL, &_action_def_before);
+  dt_shortcut_register(ac, 0, DT_ACTION_EFFECT_HOLD, GDK_KEY_backslash, 0);
+
   // add an option to allow skip mouse events while other overlays are
   // consuming mouse actions
   ac = dt_action_define(sa, NULL, N_("force pan/zoom/rotate with mouse"),
@@ -4177,6 +4317,7 @@ static inline void _clear_pipecache(dt_dev_pixelpipe_t *pipe)
 
 void leave(dt_view_t *self)
 {
+  _before_reset();
   dt_iop_color_picker_cleanup();
   if(darktable.lib->proxy.colorpicker.picker_proxy)
     dt_iop_color_picker_reset(darktable.lib->proxy.colorpicker.picker_proxy->module, FALSE);
@@ -4421,6 +4562,15 @@ void mouse_moved(dt_view_t *self,
 {
   dt_develop_t *dev = self->data;
 
+  // a drag is a pan, not a hold: give up the "before" gesture once the
+  // pointer has left the press position. A key hold is not affected
+  if((_before.hold_timeout || _before.shown) && darktable.control->button_down
+     && fabs(x - _before.press_x) + fabs(y - _before.press_y) > DT_PIXEL_APPLY_DPI(8.0f))
+  {
+    _before_cancel_hold();
+    _before_set_shown(FALSE);
+  }
+
   // if we are not hovering over a thumbnail in the filmstrip -> show
   // metadata of opened image.
   dt_imgid_t mouse_over_id = dt_control_get_mouse_over_id();
@@ -4528,6 +4678,12 @@ int button_released(dt_view_t *self,
                     const uint32_t state)
 {
   dt_develop_t *dev = darktable.develop;
+
+  if(which == GDK_BUTTON_PRIMARY)
+  {
+    _before_cancel_hold();
+    _before_set_shown(FALSE);
+  }
 
   if(darktable.develop->darkroom_skip_mouse_events && which == GDK_BUTTON_PRIMARY)
   {
@@ -4768,6 +4924,19 @@ int button_pressed(dt_view_t *self,
   }
   if(which == GDK_BUTTON_PRIMARY)
   {
+    /* essentials: press and hold on the photo shows it before any edit. Only
+     * a plain press that no module claimed gets here, so crop handles, mask
+     * drawing and the color picker keep the button; a drag cancels the hold
+     * in mouse_moved() and pans as before */
+    if(type == GDK_BUTTON_PRESS
+       && dt_modifier_is(state, 0)
+       && dt_essentials_mode_is_active())
+    {
+      _before_cancel_hold();
+      _before.press_x = x;
+      _before.press_y = y;
+      _before.hold_timeout = g_timeout_add(250, _before_hold_elapsed, NULL);
+    }
     dt_control_change_cursor("pointer");
     return 1;
   }
