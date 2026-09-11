@@ -100,6 +100,10 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Remove unwanted objects with a local LaMa model in retouch, using drawn
+  shapes without choosing a source region. Requires an installed compatible
+  AI model and operates on the original image scale.
+
 - Hold the backslash key in the darkroom to see the photo as it was
   before any edit, at the current zoom; release to return to the edit.
   The shortcut is called "show original" and can be changed like any

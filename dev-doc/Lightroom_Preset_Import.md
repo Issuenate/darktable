@@ -30,9 +30,11 @@ the same file chooser. A preset that fails to convert (`dt_get_style_name`
 returns `NULL`) is **silently skipped** in the loop; only a `dt_control_log`
 fires, no dialog.
 
-Because both public functions parse the file, and the overwrite path deletes the
-old style before re-importing, the reader runs 2-3 times per file. The
-"validate before delete" guarantee depends on that; keep it if you add caching.
+Both public functions parse the file, and the overwrite path deletes the old
+style before re-importing. Validation therefore precedes deletion, but this is
+not an atomic replacement: a file change or a failure on the second read can
+still prevent re-import after deletion. Preserve the validation order if you
+add caching.
 
 ## What it parses
 
@@ -41,7 +43,9 @@ GMarkup parser the native path uses), and is deliberately strict:
 
 - `xmlReadFile(..., XML_PARSE_NONET)`, and any DTD (`intSubset`/`extSubset`) is
   rejected outright, blocking entity-expansion / XXE.
-- exactly **one** `rdf:Description` node is required.
+- exactly **one top-level** `rdf:Description` is required under `rdf:RDF`,
+  optionally wrapped in `x:xmpmeta`. Nested descriptions in embedded looks are
+  not counted (`src/common/styles.c:1751`).
 - settings are read from the Adobe camera-raw-settings namespace
   `crs = "http://ns.adobe.com/camera-raw-settings/1.0/"` (`:1704`), in either
   form: as RDF **attributes** on the Description, or as crs **child elements**. A
@@ -49,9 +53,10 @@ GMarkup parser the native path uses), and is deliberately strict:
 - **only top-level settings** are read; embedded looks and masks (which have
   their own parameters) are not descended into.
 - `PresetType='Normal'` is required (`src/common/styles.c:1798`). This is the
-  only thing separating a develop preset from a same-extension darktable image
-  sidecar; a `Look` profile or a sidecar (no `PresetType`) is rejected. **Do not
-  loosen this gate.**
+  preset-type gate separating a develop preset from a same-extension image
+  sidecar; a `Look` profile or a sidecar without `PresetType` is rejected. A
+  preset also needs at least one convertible setting. **Do not loosen this
+  gate.**
 
 ## The approximation mapping
 
@@ -115,9 +120,12 @@ The style description is set to "approximate Lightroom preset conversion"
 (temperature, tint, contrast, whites, blacks, highlights, shadows, texture,
 dehaze, sharpening, noise reduction, ...). Every unmapped, non-metadata key is
 appended to the description as a sorted `omitted settings: ...` list. Conversion
-is **all-or-nothing**: a single out-of-range or malformed supported value does
-`goto error` and discards the whole style. Process-version differences are
-ignored beyond preferring the PV2012 curve keys.
+is **all-or-nothing for attempted mappings**: an out-of-range or malformed value
+read by a conversion pass discards the whole style. Scalar groups without a
+trigger are skipped before their values are checked (`src/common/styles.c:1812`);
+for example, `GrainFrequency` without `GrainAmount` is omitted rather than
+validated. Process-version differences are ignored beyond preferring the
+PV2012 curve keys.
 
 ## How a style is built
 
@@ -150,8 +158,10 @@ matters:
   fails safe, but changing `MAX_ANCHORS` independently breaks the assumption.
 - **The rgbcurve `multi_priority` order is meaningful** and pinned by the tests;
   reordering the passes renumbers existing users' expectations.
-- **XMP handling is strict** (exact `crs`/`rdf` hrefs, single Description, no
-  DTD). Unusual prefixes or multiple Descriptions are rejected wholesale.
+- **XMP handling checks namespace URIs, not prefix spelling** (exact `crs`/`rdf`
+  hrefs, one top-level Description, no DTD). Alternate prefixes are supported:
+  the test fixtures use `c:` and `r:`. Multiple top-level Descriptions are
+  rejected; descriptions inside embedded looks are ignored.
 - **GUI failure is silent** (`continue`, no dialog); keep that in mind if you
   change error semantics.
 
@@ -164,7 +174,8 @@ from SQLite. It covers the scalar mappings and their numeric transforms, the
 `crs:Name` `rdf:Alt` selection, the omitted-settings list, attribute vs element
 forms, the tone-curve instances and priorities, the HSL Lab-hue mapping, a large
 battery of rejections (bad numbers, structured-where-scalar, DTD/entities,
-`PresetType='Look'`, sidecars, oversized/non-monotone curves), and that importing
+`PresetType='Look'`, sidecars, oversized curves or non-increasing input
+coordinates), and that importing
 a style touches neither `main.images` nor `main.history`. It builds a real
 darktable, so it depends on the `exposure grain splittoning bilat vignette
 rgbcurve colorzones` module `.so`s.

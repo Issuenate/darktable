@@ -9,6 +9,7 @@ This guide covers building Image Operation (IOP) modules for darktable's darkroo
 |------|-------------|
 | **[IOP_Module_API.md](IOP_Module_API.md)** | Module API reference: params_t vs data_t, processing, commit_params, lifecycle |
 | **[pixelpipe_architecture.md](pixelpipe_architecture.md)** | Pixelpipe data flow, caching, ROI, ordering asymmetry |
+| **[Masks_Architecture.md](Masks_Architecture.md)** | Mask subsystem: drawn/raster masks and blend wiring, AI object masks (subject/sky/background), Essentials local masks |
 | **[introspection.md](introspection.md)** | Introspection system for parameters and GUI |
 | **[Shortcuts.md](Shortcuts.md)** | The Action/Shortcut system and `dt_action_def_t` |
 | **[Module_Groups.md](Module_Groups.md)** | Module grouping explanation and `default_group()` |
@@ -23,6 +24,7 @@ This guide covers building Image Operation (IOP) modules for darktable's darkroo
 | **[Notebook_UI.md](Notebook_UI.md)** | Creating tabbed interfaces with `GtkNotebook` |
 | **[Quick_Access_Panel.md](Quick_Access_Panel.md)** | Quick Access Panel integration for widgets |
 | **[GUI_Recipes.md](GUI_Recipes.md)** | Copy-paste patterns for notebooks, sections, buttons, visibility |
+| **[Color_Wheel.md](Color_Wheel.md)** | The `dtgtk_color_wheel` widget: a hue/chroma disc driving two bauhaus sliders (color balance rgb) |
 
 ### AI Subsystem
 | File | Description |
