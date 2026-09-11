@@ -9,6 +9,7 @@ This guide covers building Image Operation (IOP) modules for darktable's darkroo
 |------|-------------|
 | **[IOP_Module_API.md](IOP_Module_API.md)** | Module API reference: params_t vs data_t, processing, commit_params, lifecycle |
 | **[pixelpipe_architecture.md](pixelpipe_architecture.md)** | Pixelpipe data flow, caching, ROI, ordering asymmetry |
+| **[Masks_Architecture.md](Masks_Architecture.md)** | Mask subsystem: drawn/raster masks and blend wiring, AI object masks (subject/sky/background), Essentials local masks |
 | **[introspection.md](introspection.md)** | Introspection system for parameters and GUI |
 | **[Shortcuts.md](Shortcuts.md)** | The Action/Shortcut system and `dt_action_def_t` |
 | **[Module_Groups.md](Module_Groups.md)** | Module grouping explanation and `default_group()` |
