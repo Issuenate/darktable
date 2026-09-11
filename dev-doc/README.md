@@ -23,6 +23,7 @@ This guide covers building Image Operation (IOP) modules for darktable's darkroo
 | **[Notebook_UI.md](Notebook_UI.md)** | Creating tabbed interfaces with `GtkNotebook` |
 | **[Quick_Access_Panel.md](Quick_Access_Panel.md)** | Quick Access Panel integration for widgets |
 | **[GUI_Recipes.md](GUI_Recipes.md)** | Copy-paste patterns for notebooks, sections, buttons, visibility |
+| **[Color_Wheel.md](Color_Wheel.md)** | The `dtgtk_color_wheel` widget: a hue/chroma disc driving two bauhaus sliders (color balance rgb) |
 
 ### AI Subsystem
 | File | Description |
