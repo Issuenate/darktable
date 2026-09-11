@@ -18,9 +18,9 @@ segmentation model I/O (tensors, preprocessing, `config.json`) see
 | AI object masks | `DT_MASKS_OBJECT` type + automatic subject/sky/background selection | fork | committed (on `master`), `HAVE_AI` only |
 | Essentials local masks | mask-first "create a mask, then adjust only that area" editor workflow | fork | **working-tree WIP** on `local/essentials-and-remove`, mostly unstaged |
 
-Line numbers below are accurate for `local/essentials-and-remove` at the time of
-writing. The Essentials pieces are uncommitted; re-derive their lines with `grep`
-before trusting them, they will drift.
+Line numbers below refer to the `local/essentials-and-remove` working tree on
+2026-09-11. The Essentials pieces are an uncommitted snapshot, not APIs available
+on `master`; locate the named functions with `rg` before relying on these lines.
 
 ## Mental model: `mask_mode` is a per-module bitmask
 
@@ -39,10 +39,12 @@ Two facts that are easy to miss:
 
 - **The modes are a bitmask but the UI is radio-style.** Exactly one mode toggle
   (`selected_mask_mode`) is active at a time. Drawn/parametric and raster are
-  **mutually exclusive**: `DEVELOP_MASK_RASTER` never coexists with
-  `MASK`/`CONDITIONAL`. This is enforced twice: at render time by the
-  `if(uniform) / else if(raster) / else (drawn+parametric)` chain in
-  `dt_develop_blend_process` (`src/develop/blend.c:526`), and in the GUI by the
+  **mutually exclusive in the supported GUI modes**: raster is not combined
+  with `MASK`/`CONDITIONAL`, while drawn and parametric can be combined.
+  At render time the `if(uniform) / else if(raster) / else (drawn+parametric)`
+  chain in `dt_develop_blend_process` (`src/develop/blend.c:526`) gives raster
+  precedence rather than composing it with drawn/parametric masks. The GUI
+  prevents adding a drawn/parametric mode to raster with the
   guard at `src/develop/blend_gui.c:1447`:
   `if(module->blend_params->mask_mode & (mask_mode | DEVELOP_MASK_RASTER)) return FALSE;`
   This is the AGENTS.md pitfall "raster masks are mutually exclusive with drawn
@@ -57,7 +59,8 @@ Two facts that are easy to miss:
 
 ### The one rule agents break
 
-**Never write `blend_params->mask_mode` by hand from outside `blend_gui.c`.** The
+**When starting a mask from a GUI action, use the blend GUI's mode transition
+rather than only assigning `blend_params->mask_mode`.** The
 full sequence that keeps the panel consistent (the mode toggle, the radio
 `selected_mask_mode`, the header mask indicator, showmask/suppress visibility,
 box visibility, and a history item) lives only in `_blendop_masks_modes_toggle`
@@ -312,9 +315,11 @@ tree but are unrelated:
 
 ## Cross-cutting pitfalls
 
-- Raster / drawn / parametric masks are mutually exclusive; enforced in
-  `blend.c` and the `blend_gui.c:1447` guard.
-- Never set `mask_mode` by hand outside `blend_gui.c`; go through the toggle.
+- Raster masks are mutually exclusive with drawn and parametric masks; drawn
+  and parametric masks can be combined. See `blend.c` and the
+  `blend_gui.c:1447` guard.
+- GUI mask creation must go through the blend mode transition, not just assign
+  `mask_mode`.
 - `masks_type[]` index is not the `dt_masks_type_t` bit order.
 - `synch_all` starts every pipeline node at its module's `default_enabled`
   before replaying history, so auto-applied modules (and their masks) run
