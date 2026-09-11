@@ -18,6 +18,7 @@
 #include "common/gdk_event_utils.h"
 
 #include "bauhaus/bauhaus.h"
+#include "common/ai_models.h"
 #include "common/bilateral.h"
 #include "common/bilateralcl.h"
 #include "common/colorspaces_inline_conversions.h"
@@ -25,6 +26,7 @@
 #include "common/gaussian.h"
 #include "common/heal.h"
 #include "common/imagebuf.h"
+#include "common/iop_profile.h"
 #include "common/opencl.h"
 #include "develop/blend.h"
 #include "develop/imageop_math.h"
@@ -39,7 +41,7 @@
 
 // this is the version of the modules parameters,
 // and includes version information about compile-time dt
-DT_MODULE_INTROSPECTION(3, dt_iop_retouch_params_t)
+DT_MODULE_INTROSPECTION(4, dt_iop_retouch_params_t)
 
 #define RETOUCH_NO_FORMS 300
 #define RETOUCH_MAX_SCALES 15
@@ -68,14 +70,15 @@ typedef enum dt_iop_retouch_algo_type_t {
   DT_IOP_RETOUCH_CLONE = 1, // $DESCRIPTION: "clone"
   DT_IOP_RETOUCH_HEAL = 2,  // $DESCRIPTION: "heal"
   DT_IOP_RETOUCH_BLUR = 3,  // $DESCRIPTION: "blur"
-  DT_IOP_RETOUCH_FILL = 4   // $DESCRIPTION: "fill"
+  DT_IOP_RETOUCH_FILL = 4,  // $DESCRIPTION: "fill"
+  DT_IOP_RETOUCH_REMOVE = 5 // $DESCRIPTION: "content-aware remove"
 } dt_iop_retouch_algo_type_t;
 
 typedef struct dt_iop_retouch_form_data_t
 {
   dt_mask_id_t formid; // from masks, form->formid
   int scale;  // 0==original image; 1..RETOUCH_MAX_SCALES==scale; RETOUCH_MAX_SCALES+1==residual
-  dt_iop_retouch_algo_type_t algorithm;  // clone, heal, blur, fill
+  dt_iop_retouch_algo_type_t algorithm;  // clone, heal, blur, fill, remove
 
   dt_iop_retouch_blur_types_t blur_type; // gaussian, bilateral
   float blur_radius;                     // radius for blur algorithm
@@ -100,7 +103,7 @@ typedef struct dt_iop_retouch_params_t
 {
   dt_iop_retouch_form_data_t rt_forms[RETOUCH_NO_FORMS]; // array of masks index and additional data
 
-  dt_iop_retouch_algo_type_t algorithm; // $DEFAULT: DT_IOP_RETOUCH_HEAL clone, heal, blur, fill
+  dt_iop_retouch_algo_type_t algorithm; // $DEFAULT: DT_IOP_RETOUCH_HEAL clone, heal, blur, fill, remove
 
   int num_scales;       // $DEFAULT: 0 number of wavelets scales
   int curr_scale;       // $DEFAULT: 0 current wavelet scale
@@ -115,6 +118,7 @@ typedef struct dt_iop_retouch_params_t
   float fill_color[3];   // $DEFAULT: 0.0 color for fill algorithm
   float fill_brightness; // $MIN: -1.0 $MAX: 1.0 $DESCRIPTION: "brightness" value to be added to the color
   int max_heal_iter;     // $DEFAULT: 2000 $DESCRIPTION: "max_iter" number of iterations for heal algorithm
+  char inpaint_model[128];
 } dt_iop_retouch_params_t;
 
 typedef struct dt_iop_retouch_gui_data_t
@@ -131,7 +135,7 @@ typedef struct dt_iop_retouch_gui_data_t
   GtkLabel *label_form;                                                   // display number of forms
   GtkLabel *label_form_selected;                                          // display number of forms selected
   GtkWidget *bt_edit_masks, *bt_path, *bt_circle, *bt_ellipse, *bt_brush; // shapes
-  GtkWidget *bt_clone, *bt_heal, *bt_blur, *bt_fill;                      // algorithms
+  GtkWidget *bt_clone, *bt_heal, *bt_blur, *bt_fill, *bt_remove;          // algorithms
   GtkWidget *bt_showmask, *bt_suppress;                                   // suppress & show masks
 
   GtkWidget *wd_bar; // wavelet decompose bar
@@ -172,7 +176,11 @@ typedef struct dt_iop_retouch_gui_data_t
   GtkWidget *sl_mask_opacity; // draw mask opacity
 } dt_iop_retouch_gui_data_t;
 
-typedef struct dt_iop_retouch_params_t dt_iop_retouch_data_t;
+typedef struct dt_iop_retouch_data_t
+{
+  dt_iop_retouch_params_t params;
+  dt_ai_context_t *inpaint;
+} dt_iop_retouch_data_t;
 
 typedef struct dt_iop_retouch_global_data_t
 {
@@ -197,7 +205,7 @@ const char *name()
 
 const char *aliases()
 {
-  return _("split-frequency|healing|cloning|stamp|blur|fill|wavelets|spot removal");
+  return _("split-frequency|healing|cloning|stamp|blur|fill|wavelets|spot removal|inpainting|content-aware remove");
 }
 
 
@@ -375,7 +383,48 @@ int legacy_params(dt_iop_module_t *self,
     *new_version = 3;
     return 0;
   }
+  if(old_version == 3)
+  {
+    dt_iop_retouch_params_t *n = calloc(1, sizeof(*n));
+    memcpy(n, old_params, sizeof(dt_iop_retouch_params_v3_t));
+    *new_params = n;
+    *new_params_size = sizeof(*n);
+    *new_version = 4;
+    return 0;
+  }
   return 1;
+}
+
+static gboolean _has_remove(const dt_iop_retouch_params_t *p)
+{
+  for(int i = 0; i < RETOUCH_NO_FORMS; i++)
+    if(dt_is_valid_maskid(p->rt_forms[i].formid)
+       && p->rt_forms[i].algorithm == DT_IOP_RETOUCH_REMOVE)
+      return TRUE;
+  return FALSE;
+}
+
+static gboolean _remove_model_ready(dt_iop_retouch_params_t *p)
+{
+#ifdef HAVE_AI
+  if(!dt_ai_registry_is_enabled()) return FALSE;
+  if(!p->inpaint_model[0])
+  {
+    char *id = dt_ai_models_get_active_for_task("inpaint");
+    char *path = id && strlen(id) < sizeof(p->inpaint_model)
+      ? dt_ai_models_get_path(id) : NULL;
+    if(path)
+      g_strlcpy(p->inpaint_model, id, sizeof(p->inpaint_model));
+    g_free(path);
+    g_free(id);
+  }
+  char *path = dt_ai_models_get_path(p->inpaint_model);
+  const gboolean ready = path != NULL;
+  g_free(path);
+  return ready;
+#else
+  return FALSE;
+#endif
 }
 
 static int rt_get_index_from_formid(const dt_iop_retouch_params_t *p, const dt_mask_id_t formid)
@@ -558,6 +607,8 @@ static void rt_shape_selection_changed(dt_iop_module_t *self)
                                    (p->algorithm == DT_IOP_RETOUCH_BLUR));
       gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g->bt_fill),
                                    (p->algorithm == DT_IOP_RETOUCH_FILL));
+      gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g->bt_remove),
+                                   (p->algorithm == DT_IOP_RETOUCH_REMOVE));
 
       selection_changed = TRUE;
     }
@@ -612,7 +663,8 @@ static void rt_paste_forms_from_scale(dt_iop_retouch_params_t *p,
   {
     for(int i = 0; i < RETOUCH_NO_FORMS; i++)
     {
-      if(p->rt_forms[i].scale == source_scale)
+      if(p->rt_forms[i].scale == source_scale
+         && p->rt_forms[i].algorithm != DT_IOP_RETOUCH_REMOVE)
         p->rt_forms[i].scale = dest_scale;
     }
   }
@@ -1031,6 +1083,17 @@ static gboolean rt_add_shape(GtkWidget *widget,
                              const int creation_continuous,
                              dt_iop_module_t *self)
 {
+  dt_iop_retouch_params_t *params = self->params;
+  if(params->algorithm == DT_IOP_RETOUCH_REMOVE && params->curr_scale != 0)
+  {
+    dt_control_log(_("content-aware remove requires the original image scale"));
+    return FALSE;
+  }
+  if(params->algorithm == DT_IOP_RETOUCH_REMOVE && !_remove_model_ready(params))
+  {
+    dt_control_log(_("install and activate a content-aware remove model in preferences > ai models"));
+    return FALSE;
+  }
   //turn module on (else shape creation won't work)
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(self->off), TRUE);
 
@@ -1941,6 +2004,8 @@ static void rt_select_algorithm_callback(GtkGestureSingle *gesture,
     new_algo = DT_IOP_RETOUCH_HEAL;
   else if(widget == g->bt_fill)
     new_algo = DT_IOP_RETOUCH_FILL;
+  else if(widget == g->bt_remove)
+    new_algo = DT_IOP_RETOUCH_REMOVE;
 
   // check if we have to do something
   gboolean accept = TRUE;
@@ -1948,19 +2013,29 @@ static void rt_select_algorithm_callback(GtkGestureSingle *gesture,
   const GdkModifierType state = dt_gui_current_state(gesture);
 
   const int index = rt_get_selected_shape_index(p);
+  if(new_algo == DT_IOP_RETOUCH_REMOVE)
+  {
+    if(p->curr_scale != 0)
+    {
+      dt_control_log(_("content-aware remove requires the original image scale"));
+      accept = FALSE;
+    }
+    if(!_remove_model_ready(p))
+    {
+      dt_control_log(_("install and activate a content-aware remove model in preferences > ai models"));
+      accept = FALSE;
+    }
+  }
   if(index >= 0 && dt_modifier_is(state, GDK_CONTROL_MASK))
   {
     if(new_algo != p->rt_forms[index].algorithm)
     {
-      // we restrict changes to clone<->heal and blur<->fill
-      if((new_algo == DT_IOP_RETOUCH_CLONE
-          && p->rt_forms[index].algorithm != DT_IOP_RETOUCH_HEAL)
-         || (new_algo == DT_IOP_RETOUCH_HEAL
-             && p->rt_forms[index].algorithm != DT_IOP_RETOUCH_CLONE)
-         || (new_algo == DT_IOP_RETOUCH_BLUR
-             && p->rt_forms[index].algorithm != DT_IOP_RETOUCH_FILL)
-         || (new_algo == DT_IOP_RETOUCH_FILL
-             && p->rt_forms[index].algorithm != DT_IOP_RETOUCH_BLUR))
+      // clone shapes need a source; source-free shapes can share the other tools
+      const gboolean needs_source = new_algo == DT_IOP_RETOUCH_CLONE
+                                    || new_algo == DT_IOP_RETOUCH_HEAL;
+      const gboolean has_source = p->rt_forms[index].algorithm == DT_IOP_RETOUCH_CLONE
+                                  || p->rt_forms[index].algorithm == DT_IOP_RETOUCH_HEAL;
+      if(needs_source != has_source)
       {
         accept = FALSE;
       }
@@ -1978,6 +2053,8 @@ static void rt_select_algorithm_callback(GtkGestureSingle *gesture,
                                (p->algorithm == DT_IOP_RETOUCH_BLUR));
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g->bt_fill),
                                (p->algorithm == DT_IOP_RETOUCH_FILL));
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g->bt_remove),
+                               (p->algorithm == DT_IOP_RETOUCH_REMOVE));
 
   rt_show_hide_controls(self);
 
@@ -2032,6 +2109,8 @@ static void rt_select_algorithm_callback(GtkGestureSingle *gesture,
       dt_control_log(_("default tool changed to %s"), _("fill"));
     else if(p->algorithm == DT_IOP_RETOUCH_BLUR)
       dt_control_log(_("default tool changed to %s"), _("blur"));
+    else if(p->algorithm == DT_IOP_RETOUCH_REMOVE)
+      dt_control_log(_("default tool changed to %s"), _("content-aware remove"));
   }
 }
 
@@ -2273,17 +2352,41 @@ void tiling_callback(dt_iop_module_t *self,
   tiling->align = 1;
 }
 
+void commit_params(dt_iop_module_t *self,
+                   dt_iop_params_t *params,
+                   dt_dev_pixelpipe_t *pipe,
+                   dt_dev_pixelpipe_iop_t *piece)
+{
+  dt_iop_retouch_data_t *d = piece->data;
+  const dt_iop_retouch_params_t *p = (const dt_iop_retouch_params_t *)params;
+  if(strncmp(d->params.inpaint_model, p->inpaint_model, sizeof(p->inpaint_model))
+     || !_has_remove(p))
+  {
+#ifdef HAVE_AI
+    dt_ai_unload_model(d->inpaint);
+#endif
+    d->inpaint = NULL;
+  }
+  memcpy(&d->params, p, sizeof(*p));
+  d->params.inpaint_model[sizeof(p->inpaint_model) - 1] = '\0';
+  piece->process_cl_ready = !_has_remove(p);
+}
+
 void init_pipe(dt_iop_module_t *self,
                dt_dev_pixelpipe_t *pipe,
                dt_dev_pixelpipe_iop_t *piece)
 {
-  piece->data = malloc(sizeof(dt_iop_retouch_data_t));
+  piece->data = calloc(1, sizeof(dt_iop_retouch_data_t));
 }
 
 void cleanup_pipe(dt_iop_module_t *self,
                   dt_dev_pixelpipe_t *pipe,
                   dt_dev_pixelpipe_iop_t *piece)
 {
+#ifdef HAVE_AI
+  dt_iop_retouch_data_t *d = piece->data;
+  dt_ai_unload_model(d->inpaint);
+#endif
   free(piece->data);
   piece->data = NULL;
 }
@@ -2333,6 +2436,8 @@ void gui_update(dt_iop_module_t *self)
                                p->algorithm == DT_IOP_RETOUCH_HEAL);
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g->bt_fill),
                                p->algorithm == DT_IOP_RETOUCH_FILL);
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g->bt_remove),
+                               p->algorithm == DT_IOP_RETOUCH_REMOVE);
 
   // update shapes toolbar
   gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g->bt_circle),
@@ -2484,6 +2589,19 @@ void gui_init(dt_iop_module_t *self)
       self, N_("tools"), N_("activate healing tool"), NULL,
       G_CALLBACK(rt_select_algorithm_callback),
       TRUE, 0, 0, dtgtk_cairo_paint_tool_heal, hbox_algo);
+
+  g->bt_remove = dt_iop_togglebutton_new(
+      self, N_("tools"), N_("activate content-aware remove tool"), NULL,
+      G_CALLBACK(rt_select_algorithm_callback),
+      TRUE, 0, 0, dtgtk_cairo_paint_wand, hbox_algo);
+  gtk_widget_set_tooltip_text(g->bt_remove,
+      _("remove the masked area using a local AI model, without a source region\n"
+        "requires a content-aware remove model and the original image scale\n"
+        "ctrl+click to change a blur or fill shape to removal"));
+#ifndef HAVE_AI
+  gtk_widget_set_sensitive(g->bt_remove, FALSE);
+  gtk_widget_set_tooltip_text(g->bt_remove, _("content-aware remove requires a build with AI support"));
+#endif
 
   // overwrite tooltip ourself to handle shift+click
   gchar b[1000];
@@ -3024,6 +3142,15 @@ void modify_roi_in(dt_iop_module_t *self,
                    dt_iop_roi_t *roi_in)
 {
   *roi_in = *roi_out;
+
+  if(_has_remove(piece->data))
+  {
+    // identical context for the preview and for a zoomed or tiled export
+    roi_in->x = roi_in->y = 0;
+    roi_in->width = MAX(1, (int)roundf(piece->buf_in.width * roi_in->scale));
+    roi_in->height = MAX(1, (int)roundf(piece->buf_in.height * roi_in->scale));
+    return;
+  }
 
   int roir = roi_in->width + roi_in->x;
   int roib = roi_in->height + roi_in->y;
@@ -3691,6 +3818,181 @@ cleanup:
   dt_free_align(img_dest);
 }
 
+#ifdef HAVE_AI
+static inline void _remove_sample(const float *image, const int width, const int height,
+                                 const float x, const float y, float *out)
+{
+  const float sx = CLAMP(x, 0.0f, width - 1.0f);
+  const float sy = CLAMP(y, 0.0f, height - 1.0f);
+  const int x0 = (int)sx, y0 = (int)sy;
+  const int x1 = MIN(x0 + 1, width - 1), y1 = MIN(y0 + 1, height - 1);
+  const float fx = sx - x0, fy = sy - y0;
+  const float *a = image + 4 * ((size_t)y0 * width + x0);
+  const float *b = image + 4 * ((size_t)y0 * width + x1);
+  const float *c = image + 4 * ((size_t)y1 * width + x0);
+  const float *d = image + 4 * ((size_t)y1 * width + x1);
+  for(int k = 0; k < 3; k++)
+    out[k] = (1.0f - fy) * ((1.0f - fx) * a[k] + fx * b[k])
+             + fy * ((1.0f - fx) * c[k] + fx * d[k]);
+}
+#endif
+
+static gboolean _retouch_remove(dt_iop_module_t *self,
+                                dt_dev_pixelpipe_iop_t *piece,
+                                float *layer, const dt_iop_roi_t *roi,
+                                const float *mask, const dt_iop_roi_t *mr,
+                                const float opacity)
+{
+#ifdef HAVE_AI
+  if(opacity <= 0.0f) return TRUE;
+  if(!dt_pipe_processing(piece->pipe)) return TRUE;
+  dt_iop_retouch_data_t *d = piece->data;
+  dt_ai_environment_t *env = dt_ai_registry_get_env();
+  const dt_ai_model_info_t *info = env
+    ? dt_ai_get_model_info_by_id(env, d->params.inpaint_model) : NULL;
+  if(!info || g_strcmp0(info->task_type, "inpaint")
+     || g_strcmp0(info->arch, "lama-carve-512"))
+  {
+    dt_print(DT_DEBUG_AI, "[retouch] missing or incompatible inpainting model '%s'", d->params.inpaint_model);
+    return FALSE;
+  }
+
+  if(!d->inpaint)
+  {
+    // the Fourier graph is validated on ORT CPU; GPU provider coverage varies
+    d->inpaint = dt_ai_load_model(env, d->params.inpaint_model, NULL, DT_AI_PROVIDER_CPU);
+    if(!d->inpaint) return FALSE;
+  }
+  dt_ai_context_t *ctx = d->inpaint;
+  if(dt_ai_get_input_count(ctx) != 2 || dt_ai_get_output_count(ctx) != 1
+     || g_strcmp0(dt_ai_get_input_name(ctx, 0), "image")
+     || g_strcmp0(dt_ai_get_input_name(ctx, 1), "mask")
+     || dt_ai_get_input_type(ctx, 0) != DT_AI_FLOAT
+     || dt_ai_get_input_type(ctx, 1) != DT_AI_FLOAT
+     || dt_ai_get_output_type(ctx, 0) != DT_AI_FLOAT)
+  {
+    dt_print(DT_DEBUG_AI, "[retouch] incompatible model tensors: inputs=%d (%s:%d, %s:%d), outputs=%d (%d)",
+             dt_ai_get_input_count(ctx), dt_ai_get_input_name(ctx, 0), dt_ai_get_input_type(ctx, 0),
+             dt_ai_get_input_name(ctx, 1), dt_ai_get_input_type(ctx, 1),
+             dt_ai_get_output_count(ctx), dt_ai_get_output_type(ctx, 0));
+    return FALSE;
+  }
+
+  const dt_iop_order_iccprofile_info_t *work = dt_ioppr_get_pipe_current_profile_info(self, piece->pipe);
+  const dt_iop_order_iccprofile_info_t *srgb =
+    dt_ioppr_add_profile_info_to_list(self->dev, DT_COLORSPACE_SRGB, "", INTENT_PERCEPTUAL);
+  if(!work || !srgb)
+  {
+    dt_print(DT_DEBUG_AI, "[retouch] input or sRGB profile unavailable");
+    return FALSE;
+  }
+
+  const int size = 512;
+  const size_t pixels = (size_t)size * size;
+  float *rgba = dt_calloc_align_float(4 * pixels);
+  float *input = dt_alloc_align_float(3 * pixels);
+  float *binary = dt_calloc_align_float(pixels);
+  float *output = dt_alloc_align_float(3 * pixels);
+  gboolean success = FALSE;
+  if(!rgba || !input || !binary || !output) goto cleanup;
+
+  // keep the crop square, including at image edges, to preserve object proportions
+  const float side = MAX(2.0f * MAX(mr->width, mr->height), 64.0f * roi->scale);
+  const float left = mr->x - roi->x + 0.5f * (mr->width - side);
+  const float top = mr->y - roi->y + 0.5f * (mr->height - side);
+  const float step = side / size;
+  DT_OMP_FOR()
+  for(int i = 0; i < (int)pixels; i++)
+    _remove_sample(layer, roi->width, roi->height,
+                   left + ((i % size) + 0.5f) * step - 0.5f,
+                   top + ((i / size) + 0.5f) * step - 0.5f, rgba + 4 * i);
+
+  dt_ioppr_transform_image_colorspace_rgb(rgba, rgba, size, size, work, srgb, "retouch to sRGB");
+  DT_OMP_FOR()
+  for(int i = 0; i < (int)pixels; i++)
+    for(int c = 0; c < 3; c++)
+      input[c * pixels + i] = CLAMP(rgba[4 * i + c], 0.0f, 1.0f);
+
+  // splat all covered pixels so thin strokes survive downsampling; expand for interpolation
+  for(int y = 0; y < mr->height; y++)
+    for(int x = 0; x < mr->width; x++)
+    {
+      if(!(mask[(size_t)y * mr->width + x] > 0.0f)) continue;
+      const float mx = mr->x - roi->x + x - left;
+      const float my = mr->y - roi->y + y - top;
+      const int x0 = MAX(0, (int)floorf(mx / step) - 1);
+      const int y0 = MAX(0, (int)floorf(my / step) - 1);
+      const int x1 = MIN(size - 1, (int)ceilf((mx + 1) / step) + 1);
+      const int y1 = MIN(size - 1, (int)ceilf((my + 1) / step) + 1);
+      for(int yy = y0; yy <= y1; yy++)
+        for(int xx = x0; xx <= x1; xx++)
+          binary[yy * size + xx] = 1.0f;
+    }
+
+  int64_t image_shape[] = { 1, 3, size, size };
+  int64_t mask_shape[] = { 1, 1, size, size };
+  dt_ai_tensor_t inputs[] = {
+    { input, DT_AI_FLOAT, image_shape, 4 },
+    { binary, DT_AI_FLOAT, mask_shape, 4 }
+  };
+  dt_ai_tensor_t result = { output, DT_AI_FLOAT, image_shape, 4 };
+  if(!dt_pipe_processing(piece->pipe))
+  {
+    success = TRUE;
+    goto cleanup;
+  }
+  if(dt_ai_run(ctx, inputs, 2, &result, 1) < 0) goto cleanup;
+  if(!dt_pipe_processing(piece->pipe))
+  {
+    success = TRUE;
+    goto cleanup;
+  }
+  for(size_t i = 0; i < 3 * pixels; i++)
+    if(!isfinite(output[i]))
+    {
+      dt_print(DT_DEBUG_AI, "[retouch] non-finite inpainting output");
+      goto cleanup;
+    }
+
+  DT_OMP_FOR()
+  for(int i = 0; i < (int)pixels; i++)
+    for(int c = 0; c < 3; c++)
+      rgba[4 * i + c] = CLAMP(output[c * pixels + i] / 255.0f, 0.0f, 1.0f);
+  dt_ioppr_transform_image_colorspace_rgb(rgba, rgba, size, size, srgb, work, "retouch from sRGB");
+  for(size_t i = 0; i < pixels; i++)
+    for(int c = 0; c < 3; c++)
+      if(!isfinite(rgba[4 * i + c]))
+      {
+        dt_print(DT_DEBUG_AI, "[retouch] non-finite color conversion");
+        goto cleanup;
+      }
+
+  DT_OMP_FOR()
+  for(int y = 0; y < mr->height; y++)
+    for(int x = 0; x < mr->width; x++)
+    {
+      const float alpha = CLAMP(mask[(size_t)y * mr->width + x] * opacity, 0.0f, 1.0f);
+      if(!(alpha > 0.0f)) continue;
+      const int px = mr->x - roi->x + x, py = mr->y - roi->y + y;
+      dt_aligned_pixel_t replacement;
+      _remove_sample(rgba, size, size, (px + 0.5f - left) / step - 0.5f,
+                     (py + 0.5f - top) / step - 0.5f, replacement);
+      float *dest = layer + 4 * ((size_t)py * roi->width + px);
+      for(int c = 0; c < 3; c++)
+        dest[c] += alpha * (replacement[c] - dest[c]);
+    }
+  success = TRUE;
+cleanup:
+  dt_free_align(rgba);
+  dt_free_align(input);
+  dt_free_align(binary);
+  dt_free_align(output);
+  return success;
+#else
+  return FALSE;
+#endif
+}
+
 static void rt_process_forms(float *layer, dwt_params_t *const wt_p, const int scale1)
 {
   int scale = scale1;
@@ -3792,7 +4094,7 @@ static void rt_process_forms(float *layer, dwt_params_t *const wt_p, const int s
         const dt_iop_retouch_algo_type_t algo = p->rt_forms[index].algorithm;
         float dx = 0.f, dy = 0.f, angle = 0.f;
 
-        if(algo != DT_IOP_RETOUCH_BLUR && algo != DT_IOP_RETOUCH_FILL)
+        if(algo == DT_IOP_RETOUCH_CLONE || algo == DT_IOP_RETOUCH_HEAL)
         {
           if(!rt_masks_get_transform_to_destination(self, piece, roi_layer, form, &dx, &dy, &angle,
                                                 p->rt_forms[index].distort_mode))
@@ -3829,7 +4131,8 @@ static void rt_process_forms(float *layer, dwt_params_t *const wt_p, const int s
         if((dx != 0
             || dy != 0
             || algo == DT_IOP_RETOUCH_BLUR
-            || algo == DT_IOP_RETOUCH_FILL)
+            || algo == DT_IOP_RETOUCH_FILL
+            || algo == DT_IOP_RETOUCH_REMOVE)
            && ((roi_mask_scaled.width > 2)
                && (roi_mask_scaled.height > 2)))
         {
@@ -3874,6 +4177,18 @@ static void rt_process_forms(float *layer, dwt_params_t *const wt_p, const int s
             _retouch_fill(layer, roi_layer, mask_scaled,
                           &roi_mask_scaled, form_opacity, fill_color);
           }
+          else if(algo == DT_IOP_RETOUCH_REMOVE)
+          {
+            if(scale != 0 || !_retouch_remove(self, piece, layer, roi_layer,
+                                              mask_scaled, &roi_mask_scaled, form_opacity))
+            {
+              dt_iop_set_module_trouble_message(self, _("content-aware remove failed"),
+                _("removal was not applied: check the installed model, AI settings and original image scale"),
+                NULL);
+              dt_print(DT_DEBUG_ALWAYS, "[retouch] content-aware remove failed for model '%s'",
+                       p->inpaint_model);
+            }
+          }
           else
             dt_print(DT_DEBUG_ALWAYS,
                      "rt_process_forms: unknown algorithm %i", algo);
@@ -3904,6 +4219,8 @@ void process(dt_iop_module_t *self,
 
   dt_iop_retouch_params_t *p = piece->data;
   dt_iop_retouch_gui_data_t *g = self->gui_data;
+
+  dt_iop_clear_module_trouble_message(self);
 
   float *in_retouch = NULL;
 

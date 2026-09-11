@@ -39,7 +39,12 @@ void dtgtk_color_wheel_invalidate(GtkWidget *wheel);
 ```
 
 - `hue_slider` / `chroma_slider` are the two bauhaus sliders the wheel reads and
-  writes. The wheel does not take ownership; they must outlive it.
+  writes. The wheel does not take ownership; both must remain valid while it is
+  in use. The `value-changed` connections in `src/dtgtk/colorwheel.c:285-286`
+  use the wheel as raw callback data and are not disconnected by `_free()`.
+  If the sliders survive destruction of the wheel, disconnect their handlers
+  with that wheel as callback data before destroying it, for example with
+  `g_signal_handlers_disconnect_by_data(slider, wheel)` for each slider.
 - `chroma_range` maps the rim to a slider value: a puck at the rim sets
   `chroma = chroma_range`, the center sets `0`. Pass the chroma slider's **soft**
   maximum, not its hard maximum (see the sizing note below). A non-positive
@@ -71,8 +76,9 @@ depends on the module's output profile.
 Geometry conventions (`_draw` / `_build_disc` in `colorwheel.c`): 0 degrees is at
 the right and hue turns counter-clockwise, matching the hue slider's gradient
 (screen y grows down, so `dy` is negated). The puck sits at
-`reach = chroma / chroma_range` of the radius, with a line back to the center so
-a small offset is still visible.
+`reach = CLAMPF(chroma / chroma_range, 0, 1)` of the radius, with a line back to
+the center so a small offset is still visible. A slider value beyond the wheel's
+range stays at the rim visually; the numeric slider can still hold that value.
 
 Input is wired with the GTK4-ready event-controller helpers
 (`dt_gui_connect_click`, `dt_gui_connect_motion`, `dt_gui_connect_scroll`), not
@@ -120,8 +126,8 @@ the Essentials interface get them.
   different soft maxima (global `0.01`, midtones `0.1`, highlights `0.2`,
   shadows `0.5`).
 
-A staged refinement on `local/essentials-and-remove` passes the range's
-luminance slider (`*_Y`) into `_add_color_wheel()` and reorders the wheel row to
+An unmerged snapshot on `local/essentials-and-remove` as of 2026-09-11 passes
+the range's luminance slider (`*_Y`) into `_add_color_wheel()` and reorders the wheel row to
 sit directly above that slider, so the disc reads as the head of the range's
 controls rather than after them.
 

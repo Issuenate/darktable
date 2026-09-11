@@ -21,3 +21,13 @@ if(WIN32)
 endif(WIN32)
 
 add_subdirectory(unittests)
+
+add_executable(darktable-test-retouch-remove retouch_remove.c)
+target_link_libraries(darktable-test-retouch-remove lib_darktable)
+add_dependencies(darktable-test-retouch-remove retouch)
+add_test(NAME retouch_remove
+    COMMAND darktable-test-retouch-remove "${DARKTABLE_DATADIR}" "${DARKTABLE_LIBDIR}")
+if(WIN32)
+    set_target_properties(darktable-test-retouch-remove PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${DARKTABLE_BINDIR})
+endif()
