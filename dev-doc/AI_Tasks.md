@@ -14,6 +14,9 @@ Interactive object masking using SAM/SAM2/SegNext models.
 **Task key**: `"mask"`
 **API**: `src/common/ai/segmentation.h`
 **Consumer**: `src/develop/masks/object.c`
+**Subsystem**: [Masks_Architecture.md](Masks_Architecture.md) covers how the
+object mask type attaches to modules, the automatic-selection internals, and the
+`HAVE_AI` build gating
 
 ### How It Works
 
