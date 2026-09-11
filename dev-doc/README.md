@@ -38,6 +38,11 @@ This guide covers building Image Operation (IOP) modules for darktable's darkroo
 |------|-------------|
 | **[Essentials_UI_Architecture.md](Essentials_UI_Architecture.md)** | The guided interface: experience mode, module facade, editor sections, albums, export, styling hooks |
 
+### Styles and interop
+| File | Description |
+|------|-------------|
+| **[Lightroom_Preset_Import.md](Lightroom_Preset_Import.md)** | Importing Lightroom `.xmp` develop presets as approximate darktable styles |
+
 ### Guides
 | File | Description |
 |------|-------------|
