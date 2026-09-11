@@ -29,7 +29,7 @@ migration.
 ```mermaid
 flowchart TD
     subgraph UI["Essentials presentation"]
-        H["essentials_header<br/>libs/tools/essentials_header.c<br/><i>stages, Find Anything, Export</i>"]
+        H["essentials_header<br/>libs/tools/essentials_header.c<br/><i>stages, Export</i>"]
         L["essentials_library<br/>libs/essentials_library.c<br/><i>add photos, destinations</i>"]
         I["essentials_inspector<br/>libs/essentials_inspector.c<br/><i>rating, labels, album, actions</i>"]
         M["modulegroups facade<br/>libs/modulegroups.c<br/><i>friendly editor sections</i>"]
@@ -71,9 +71,9 @@ arrives through `common/dtpthread.h`.
 
 The registry is *descriptive*. Looking a capability up does not perform it: the
 UI still calls the core function itself. What the registry guarantees is that
-the Library button, the Find Anything result and the MCP description all refer
-to the same thing by the same stable id, and that nothing can be advertised to
-an agent that no descriptor covers.
+the Library button and the MCP description refer to the same thing by the same
+stable id, and that nothing can be advertised to an agent that no descriptor
+covers.
 
 `tools/check_capability_registry.py` enforces the second half of that: every
 `DT_ESSENTIALS_ACTION("...")` in the Essentials sources must resolve to a
@@ -106,8 +106,10 @@ flowchart LR
 ```
 
 `dt_essentials_mode_is_active()` in `gui/gtk.c` is the single reader, used by
-`essentials_header.c`, `modulegroups.c`, `dtgtk/thumbtable.c` and `gui/gtk.c`
-itself. It resolves `auto` and writes the answer back, so the first caller
+`essentials_header.c`, `modulegroups.c`, `dtgtk/thumbtable.c`, `libs/histogram.c`,
+`views/darkroom.c` and `gui/gtk.c` itself. Most callers read it to hide or resize
+widgets; `darkroom.c` also reads it to switch input behavior (walking the
+filmstrip, holding for before). It resolves `auto` and writes the answer back, so the first caller
 settles it and no later caller can disagree. That write, resolving `auto` to a
 concrete value, is the only place in `src/` that sets `ui/experience_mode`;
 every other change to it comes from the preferences dialog.
@@ -120,28 +122,29 @@ for a key the registry has nothing to do with.
 ## What Essentials shows
 
 `essentials_header` owns the facade. It runs in every view, sits in
-`DT_UI_CONTAINER_PANEL_TOP_CENTER`, and on each view change queues
-`_apply_experience()` on the main loop. That entry point does little itself: the
+`DT_UI_CONTAINER_PANEL_TOP_CENTER`, and packs the three stage buttons and an
+export button in one row. On each view change it queues `_apply_experience()` on
+the main loop at high priority (`g_idle_add_full(G_PRIORITY_HIGH_IDLE, ...)`, so
+it runs before GTK's paint cycle). That entry point does little itself: the
 two halves below it are `_apply_panel_overrides()`, which saves and overrides
 panel visibility, and `_apply_module_visibility()`, which filters the module
 list.
 
 ```mermaid
 flowchart TD
-    START["view changed / main window mapped"] --> IDLE["g_idle_add(_apply_experience)"]
-    IDLE --> MODE{"essentials?"}
+    START["view changed / main window mapped"] --> IDLE["g_idle_add_full(G_PRIORITY_HIGH_IDLE,<br/>_apply_experience)"]
+    IDLE --> MODE{"facade on?<br/>essentials AND<br/>(library or darkroom)"}
 
     MODE -->|no| RESTORE["restore saved panel visibility<br/>drop .essentials-ui and .essentials-panel<br/>show every module the view allows"]
 
     MODE -->|yes| SAVE["save advanced panel visibility once"]
-    SAVE --> HIDE["hide center-top, center-bottom and bottom panels"]
+    SAVE --> HIDE["hide center-top and center-bottom;<br/>hide bottom only in library<br/>(darkroom keeps it for the filmstrip)"]
     HIDE --> CLASS["add .essentials-ui to the main window<br/>add .essentials-panel to #left and #right"]
     CLASS --> VIEW{"which view?"}
 
     VIEW -->|lighttable| LT["show only:<br/>essentials_header, essentials_library,<br/>essentials_inspector, backgroundjobs"]
-    VIEW -->|darkroom| DR["show only:<br/>essentials_header, modulegroups,<br/>histogram, backgroundjobs<br/>+ hide the left panel"]
+    VIEW -->|darkroom| DR["show only:<br/>essentials_header, modulegroups,<br/>histogram, filmstrip, backgroundjobs<br/>+ hide the left panel"]
     DR --> REFRESH["_refresh_editor_experience():<br/>re-enter modulegroups so GTK's final<br/>show-all cannot reveal the module list"]
-    VIEW -->|other| NONE["hide every library module"]
 ```
 
 The visibility pass is a filter over `darktable.lib->plugins`, not a separate
@@ -154,8 +157,8 @@ why leaving Essentials costs nothing and loses nothing.
 
 The header is not an exception to its own pass: it is visible when Essentials is
 active and hidden otherwise. It used to be pinned visible in both, which left
-its stage numbers and Find Anything sitting on top of the complete interface as
-a second, overlapping set of controls.
+its stage numbers sitting on top of the complete interface as a second,
+overlapping set of controls.
 
 Two details are load-bearing and easy to break:
 
@@ -172,7 +175,7 @@ Two details are load-bearing and easy to break:
 flowchart LR
     subgraph LIB["Library"]
         direction LR
-        LH["header: 1 add photos - 2 choose - 3 edit & export<br/>Find Anything - Export"]
+        LH["header: 1 add photos - 2 choose - 3 edit & export<br/>Export"]
         LL["left: essentials_library<br/>browse usb or folder<br/>all photos / recently added / by date<br/>albums / people / places / tags"]
         LC["center: thumbtable<br/>(own empty-library painting)"]
         LR2["right: essentials_inspector<br/>filename, date, camera, lens<br/>rating + reject<br/>color label<br/>album<br/>open in edit / export"]
@@ -185,12 +188,19 @@ flowchart LR
         direction LR
         EH["header: same shared row"]
         EC["center: darkroom canvas"]
-        ER["right: histogram<br/>+ modulegroups in Essentials dress:<br/>profile / light / color /<br/>effects / detail / optics / geometry<br/>each section may carry tool rows"]
+        ER["right: histogram (capped to 132px)<br/>+ modulegroups in Essentials dress:<br/>profile / light / color /<br/>effects / detail / optics / geometry<br/>each section may carry tool rows"]
     end
 ```
 
-The left panel is hidden in Edit, so the editor is one photo and one column of
-adjustments.
+The left panel is hidden in Edit, so the editor is one photo, one column of
+adjustments, and a filmstrip along the bottom to walk between photos.
+
+The inspector shows one of two states, the "select a photo" placeholder or the
+photo's details. darktable's per-view `show_all` would otherwise reveal both at
+once, so `essentials_inspector.c` builds both and then calls
+`gtk_widget_set_no_show_all(TRUE)` on each, leaving only its `_update()` to
+choose which is visible. `_update()` also falls back to the placeholder when the
+hovered image has left the cache, rather than dereferencing a failed lookup.
 
 ## The Essentials editor
 
@@ -334,6 +344,34 @@ technical module list with nothing to click. `_lib_modulegroups_update_iop_visib
 therefore snaps the group back to `DT_MODULEGROUP_BASICS` whenever Essentials is
 active and no tool is open.
 
+### Walking photos, and holding for before
+
+Two editor gestures exist only in Essentials, both in `views/darkroom.c`.
+
+Left and right walk the filmstrip. In the complete interface the horizontal
+"move" action pans the image; in Essentials `_action_process_move()` routes it to
+`_dev_jump_image()` instead, so Left and Right step to the previous and next
+photo the way they walk the library grid. A zoomed image is still panned with the
+mouse, and the complete interface keeps its panning binding untouched.
+
+Hold shows the photo before your edits. The "show original" action (default
+backslash, a `HOLD` shortcut) paints the pre-edit render over the edited image at
+the current zoom with a "before" label. In Essentials a plain press-and-hold on
+the photo does the same, armed by a 250 ms timer in `button_pressed()` so that a
+drag cancels the hold and pans as usual (crop, masks and the color picker keep
+the button). `_before_expose()` renders the comparison synchronously through
+`dt_dev_image()`, the way the snapshots module renders a snapshot.
+
+"Before" is not the flat raw. It means where darktable's own setup ends: the
+mandatory modules plus the auto-applied presets. `_before_history_end()` finds it
+as the first history prefix whose hash equals the auto hash recorded when the
+image was first opened, through a new `dt_history_hash_compute_prefix()`
+(`common/history.c`, declared in `common/history.h`) that hashes the first *n*
+rows exactly as the stored hashes were computed at write time. A compressed or
+reordered history has no such prefix and falls back to step 0, darktable's own
+"original". The filmstrip walk and the hold gesture are on `master`; the
+before-as-auto-applied refinement is on `local/essentials-and-remove`.
+
 ## Capabilities in the UI
 
 Every Essentials action names a capability:
@@ -348,18 +386,19 @@ descriptor cannot ship. `library.*` covers navigation and organization,
 unlocalized; the visible label lives in the descriptor's `name` and may be
 translated freely without touching an id or a stored plan.
 
-Find Anything is the registry's other consumer.
-`dt_capabilities_search()` scores a query against each descriptor's name,
+The registry's other consumer is the read-only MCP tool. An earlier build had a
+"Find Anything" box in the header that ran the same search over the descriptors;
+the editor-shell rework removed it, so `dt_capabilities_search()` now feeds only
+`capabilities_search` over MCP. It scores a query against each descriptor's name,
 description, synonyms and examples, subtracting for tokens that match nothing,
-and returns a deterministic ranking. There is no model in this path: typing
+and returns a deterministic ranking. There is no model in this path: querying
 "make brighter" finds `edit.exposure.adjust` because the descriptor says so.
 
 ```mermaid
 flowchart LR
-    T["typed phrase"] --> S["dt_capabilities_search()<br/>name x5, synonyms x3,<br/>examples x2, description x1<br/>-120 per unmatched token"]
+    T["query (MCP)"] --> S["dt_capabilities_search()<br/>name x5, synonyms x3,<br/>examples x2, description x1<br/>-120 per unmatched token"]
     S --> R["ranked descriptors"]
-    R --> A["_activate_capability()<br/>navigates or performs"]
-    R --> MCPX["capabilities_search<br/>same ranking, read-only"]
+    R --> MCPX["capabilities_search<br/>read-only"]
 ```
 
 ### Confirmation policy
@@ -558,9 +597,11 @@ script exercises the same path a new user gets rather than going around it.
 - Export writes the configuration keys and calls `dt_control_export()` directly.
   It is not a typed plan, so it gains nothing from the executor described in
   `Agent_Tool_Architecture.md` and an agent cannot request one.
-- Masks, and any other module needing the canvas, have no tool row yet. Adding
-  one is a table entry plus a capability, but drawn and parametric masks also
-  need a friendly vocabulary before they are worth exposing.
+- Modules needing the canvas beyond crop and perspective have no plain tool row
+  yet. A Lightroom-style local-masks workflow is in progress on
+  `local/essentials-and-remove` (a masks section above the editor rather than a
+  tool row); see [`Masks_Architecture.md`](Masks_Architecture.md). A plain tool
+  row for another canvas module is a table entry plus a capability.
 - *people* and *tags* both open the tag browser unfiltered; only *albums* has a
   hierarchy of its own.
 - Auto/Profile controls are absent on purpose. A visually plausible button with
