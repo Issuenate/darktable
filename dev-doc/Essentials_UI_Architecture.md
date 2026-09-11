@@ -362,15 +362,18 @@ drag cancels the hold and pans as usual (crop, masks and the color picker keep
 the button). `_before_expose()` renders the comparison synchronously through
 `dt_dev_image()`, the way the snapshots module renders a snapshot.
 
-"Before" is not the flat raw. It means where darktable's own setup ends: the
-mandatory modules plus the auto-applied presets. `_before_history_end()` finds it
-as the first history prefix whose hash equals the auto hash recorded when the
-image was first opened, through a new `dt_history_hash_compute_prefix()`
-(`common/history.c`, declared in `common/history.h`) that hashes the first *n*
-rows exactly as the stored hashes were computed at write time. A compressed or
-reordered history has no such prefix and falls back to step 0, darktable's own
-"original". The filmstrip walk and the hold gesture are on `master`; the
-before-as-auto-applied refinement is on `local/essentials-and-remove`.
+On `master`, `_before_expose()` passes history step 0 to `dt_dev_image()`
+(`src/views/darkroom.c:629`). It does not yet select the auto-applied history
+prefix.
+
+**Local refinement, not on `master`:** commit `b4f21c2fa8` on
+`local/essentials-and-remove` changes "before" to the mandatory modules plus
+the auto-applied presets. `_before_history_end()` looks for the first history
+prefix whose hash equals the recorded auto hash, using
+`dt_history_hash_compute_prefix()` (`common/history.c`, declared in
+`common/history.h`). If no matching prefix remains, for example after history
+compression or reordering, it falls back to step 0. Compression or reordering
+does not itself prove that no prefix matches.
 
 ## Capabilities in the UI
 

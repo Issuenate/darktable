@@ -14,6 +14,9 @@ Interactive object masking using SAM/SAM2/SegNext models.
 **Task key**: `"mask"`
 **API**: `src/common/ai/segmentation.h`
 **Consumer**: `src/develop/masks/object.c`
+**Subsystem**: [Masks_Architecture.md](Masks_Architecture.md) covers how the
+object mask type attaches to modules, the automatic-selection internals, and the
+`HAVE_AI` build gating
 
 ### How It Works
 
@@ -414,4 +417,88 @@ upscale-bsrgan/
   config.json
   model_x2.onnx
   model_x4.onnx
+```
+
+---
+
+## Content-Aware Remove
+
+Retouch's remove algorithm inpaints a drawn circle, ellipse, path, or brush
+without a source region. It runs on the original image scale (0), before
+wavelet decomposition. Blur/fill shapes on that scale can be converted with
+ctrl+click on remove. Removal shapes cannot be moved to a wavelet scale.
+
+**Task key**: `"inpaint"`
+**Consumer**: `src/iop/retouch.c`
+**Architecture**: `"lama-carve-512"`
+
+### Install the Model
+
+Create a package with Python 3, using only its standard library:
+
+```bash
+python3 tools/ai/package-lama.py /tmp/inpaint-lama-carve-512-v1.dtmodel
+```
+
+The script downloads Carve Photos' `lama_fp32.onnx` at a pinned revision,
+checks its SHA-256, and creates a `.dtmodel` archive. To package an existing
+download, add `--model-file /path/to/lama_fp32.onnx`; the same checksum check
+applies. The weights are not bundled with darktable.
+
+In preferences > ai models, enable AI, install the file and activate the
+content-aware remove model. In retouch, select original image scale, select
+remove (the wand icon), and draw a shape over the unwanted area. Include
+the object's edges and shadow. Feathering and opacity remain editable.
+
+The model ID is stored in the retouch history parameters. Changing the
+active model in preferences does not change existing edits. A different
+model requires a new retouch instance. A machine reopening an edit needs
+the same model installed. Missing models or inference failures leave the
+affected shape unchanged and report a module warning and log message.
+
+### Tensor Contract
+
+| Tensor | Name | Shape | Type | Values |
+|--------|------|-------|------|--------|
+| Input 0 | `image` | `[1, 3, 512, 512]` | float32 | sRGB, RGB order, [0,1] |
+| Input 1 | `mask` | `[1, 1, 512, 512]` | float32 | 1 removes, 0 keeps |
+| Output 0 | `output` | `[1, 3, 512, 512]` | float32 | RGB order, [0,255] |
+
+This contract is specific to
+[Carve Photos' export](https://github.com/Carve-Photos/lama/blob/main/export_LaMa_to_onnx.ipynb).
+Other LaMa exports may use different tensor layouts, ranges, or operators;
+do not assign this architecture to an arbitrary model.
+
+### Processing and Limitations
+
+- Each shape uses a square context crop twice its bounding-box size,
+  resampled to 512 x 512. Image edges are extended by repeating the edge.
+- The current pipeline RGB profile is converted to sRGB before inference
+  and back afterward. The model input is bounded to [0,1], so generated
+  areas cannot preserve scene-referred highlights beyond that range or
+  colors outside sRGB. Unmasked pixels are not color-converted.
+- Every covered mask pixel contributes to the binary inference mask,
+  including feathered edges. The mask is expanded at model resolution to
+  protect interpolation boundaries. The original feathered mask and group
+  opacity control blending; alpha and pixels outside the mask are retained.
+- Shapes run in order, so later removals see earlier repairs. Only removal
+  instances use CPU processing, with a cached ONNX CPU session per pipe.
+- The full input region is requested so zooming does not truncate context.
+  Preview and export can differ due to their input resolution; large
+  removals can lose detail at the fixed model resolution.
+- Inference is local and needs no network connection after installation.
+  Results are synthesized and may contain artifacts, especially for faces,
+  text, repeating structures, or shapes lacking surrounding context.
+
+### Verification
+
+`darktable-test-retouch-remove` checks history migration and region handling
+without weights. Passing a model package as its third argument also checks
+real inference, feathering/opacity, unchanged alpha and unmasked pixels,
+edge crops, model selection persistence, and unavailable-model behavior:
+
+```bash
+cmake --build build --target darktable-test-retouch-remove
+build/bin/tests/darktable-test-retouch-remove \
+  build/share/darktable build/lib/darktable /tmp/inpaint-lama-carve-512-v1.dtmodel
 ```
