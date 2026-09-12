@@ -100,6 +100,11 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Essentials now offers a dedicated mask editor with the full shape list,
+  brush and shape settings, mask overlay, and local exposure, color grading,
+  texture, sharpening, and noise reduction controls. Adjustments share the
+  same mask, and each offers access to its full module controls.
+
 - Remove unwanted objects with a local LaMa model in retouch, using drawn
   shapes without choosing a source region. Requires an installed compatible
   AI model and operates on the original image scale.
