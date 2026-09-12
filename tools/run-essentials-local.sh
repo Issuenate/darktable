@@ -25,10 +25,14 @@ if command -v brew >/dev/null 2>&1; then
   export XDG_DATA_DIRS
 fi
 
-if [ ! -x "$darktable_bin" ]; then
-  echo "build darktable first with: cmake -S . -B build && cmake --build build --target darktable modulegroups essentials_header essentials_library essentials_inspector -j4" >&2
+if [ ! -f "$project_dir/build/CMakeCache.txt" ]; then
+  echo "configure darktable first with: cmake -S . -B build" >&2
   exit 1
 fi
+
+cmake --build "$project_dir/build" --target darktable modulegroups masks exposure \
+  colorbalancergb contrastntexture sharpen denoiseprofile \
+  essentials_header essentials_library essentials_inspector -j4
 
 mkdir -p "$profile_dir/config" "$profile_dir/cache" "$profile_dir/tmp"
 
@@ -39,8 +43,11 @@ cp "$project_dir/data/themes/darktable.css" \
   "$project_dir/build/share/darktable/themes/darktable.css"
 
 exec "$darktable_bin" \
+  --datadir "$project_dir/build/share/darktable" \
+  --moduledir "$project_dir/build/lib/darktable" \
   --configdir "$profile_dir/config" \
   --cachedir "$profile_dir/cache" \
   --tmpdir "$profile_dir/tmp" \
   --library "$profile_dir/library.db" \
+  --conf ui/experience_mode=essentials \
   "$@"

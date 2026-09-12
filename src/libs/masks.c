@@ -54,6 +54,57 @@ static void _lib_masks_get_values(GtkTreeModel *model,
 static gboolean
 _update_foreach(GtkTreeModel *model, GtkTreePath *path, GtkTreeIter *iter, gpointer data);
 
+static const struct
+{
+  const char *op, *label;
+  gboolean expanded;
+} _essentials_adjustments[] = {
+  { "exposure", N_("exposure"), TRUE },
+  { "colorbalancergb", N_("color and grading"), TRUE },
+  { "contrastntexture", N_("texture"), FALSE },
+  { "sharpen", N_("sharpening"), FALSE },
+  { "denoiseprofile", N_("noise reduction"), FALSE }
+};
+
+static const struct
+{
+  int adjustment;
+  const char *group, *field, *label, *format;
+  float offset;
+} _essentials_fields[] = {
+  { 0, NULL, "exposure", N_("exposure"), N_(" EV"), 0 },
+  { 0, NULL, "black", N_("black level"), "", 0 },
+  { 1, NULL, "contrast", N_("contrast"), "%", 0 },
+  { 1, NULL, "saturation_global", N_("saturation"), "%", 0 },
+  { 1, NULL, "vibrance", N_("vibrance"), "%", 0 },
+  { 1, NULL, "chroma_global", N_("chroma"), "%", 0 },
+  { 1, NULL, "hue_angle", N_("hue shift"), "°", 0 },
+  { 1, N_("global grading"), "global_Y", N_("luminance"), "%", 0 },
+  { 1, N_("global grading"), "global_H", N_("hue"), "°", 0 },
+  { 1, N_("global grading"), "global_C", N_("chroma"), "%", 0 },
+  { 1, N_("shadows"), "shadows_Y", N_("luminance"), "%", 0 },
+  { 1, N_("shadows"), "shadows_H", N_("hue"), "°", 0 },
+  { 1, N_("shadows"), "shadows_C", N_("chroma"), "%", 0 },
+  { 1, N_("shadows"), "saturation_shadows", N_("saturation"), "%", 0 },
+  { 1, N_("midtones"), "midtones_Y", N_("luminance"), "%", 0 },
+  { 1, N_("midtones"), "midtones_H", N_("hue"), "°", 0 },
+  { 1, N_("midtones"), "midtones_C", N_("chroma"), "%", 0 },
+  { 1, N_("midtones"), "saturation_midtones", N_("saturation"), "%", 0 },
+  { 1, N_("highlights"), "highlights_Y", N_("luminance"), "%", 0 },
+  { 1, N_("highlights"), "highlights_H", N_("hue"), "°", 0 },
+  { 1, N_("highlights"), "highlights_C", N_("chroma"), "%", 0 },
+  { 1, N_("highlights"), "saturation_highlights", N_("saturation"), "%", 0 },
+  { 2, NULL, "gain_local_contrast", N_("texture"), "%", -100 },
+  { 2, NULL, "detail_level", N_("detail level"), "", 0 },
+  { 2, NULL, "edge_protection", N_("edge protection"), "", 0 },
+  { 2, N_("filter settings"), "filter_iterations", N_("filter iterations"), "", 0 },
+  { 2, N_("filter settings"), "noise_bias", N_("noise bias"), "", 0 },
+  { 3, NULL, "amount", N_("amount"), "", 0 },
+  { 3, NULL, "radius", N_("radius"), "", 0 },
+  { 3, NULL, "threshold", N_("threshold"), "", 0 },
+  { 4, NULL, "strength", N_("strength"), "", 0 }
+};
+
 typedef struct dt_lib_masks_t
 {
   /* vbox with managed history items */
@@ -67,6 +118,11 @@ typedef struct dt_lib_masks_t
   GtkWidget *pressure, *smoothing;
   float last_value[DT_MASKS_PROPERTY_LAST];
   GtkWidget *none_label;
+  GtkWidget *essentials_adjustments, *essentials_overlay, *essentials_hint;
+  GtkWidget *essentials_sliders[G_N_ELEMENTS(_essentials_fields)];
+  GtkWidget *essentials_enabled[G_N_ELEMENTS(_essentials_adjustments)];
+  GtkWidget *essentials_full[G_N_ELEMENTS(_essentials_adjustments)];
+  gboolean essentials_updating;
   // path-only shrink/grow (outset/inset) control. The slider is a signed offset
   // measured from the shape's baseline (captured by the path mask the first time
   // it is resized); 0 restores it. The unit (px / %) is a toggle in the slider's
@@ -92,6 +148,7 @@ typedef struct dt_lib_masks_t
 } dt_lib_masks_t;
 
 static void _resize_update(dt_lib_masks_t *d);
+static void _essentials_update_adjustments(dt_lib_masks_t *d);
 
 const char *name(dt_lib_module_t *self)
 {
@@ -609,6 +666,7 @@ static void _update_all_properties(dt_lib_masks_t *self)
 
   // shrink/grow applies only to a single path shape
   _resize_update(self);
+  _essentials_update_adjustments(self);
 }
 
 static void _lib_masks_get_values(GtkTreeModel *model,
@@ -621,6 +679,368 @@ static void _lib_masks_get_values(GtkTreeModel *model,
   if(module ) gtk_tree_model_get(model, iter, TREE_MODULE, module, -1);
   if(groupid) gtk_tree_model_get(model, iter, TREE_GROUPID, groupid, -1);
   if(formid ) gtk_tree_model_get(model, iter, TREE_FORMID, formid, -1);
+}
+
+static dt_iop_module_t *_essentials_selected_module(dt_lib_masks_t *d)
+{
+  if(!dt_essentials_mode_is_active() || darktable.develop->form_gui->creation)
+    return NULL;
+
+  GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(d->treeview));
+  GtkTreeModel *model = NULL;
+  GList *rows = gtk_tree_selection_get_selected_rows(selection, &model);
+  dt_iop_module_t *module = NULL;
+  for(GList *l = rows; l; l = g_list_next(l))
+  {
+    GtkTreeIter iter;
+    dt_iop_module_t *candidate = NULL;
+    if(gtk_tree_model_get_iter(model, &iter, l->data))
+      _lib_masks_get_values(model, &iter, &candidate, NULL, NULL);
+    if(!candidate || (module && module != candidate))
+    {
+      module = NULL;
+      break;
+    }
+    module = candidate;
+  }
+  g_list_free_full(rows, (GDestroyNotify)gtk_tree_path_free);
+
+  // the tree may still contain an instance removed since the last lazy update
+  if(!module || !g_list_find(darktable.develop->iop, module)
+     || !module->blend_data || !(module->blend_params->mask_mode & DEVELOP_MASK_MASK)
+     || (module->blend_params->mask_mode & DEVELOP_MASK_RASTER))
+    return NULL;
+  const dt_masks_form_t *group = dt_masks_get_from_id(darktable.develop, module->blend_params->mask_id);
+  if(!group || !group->points) return NULL;
+  dt_iop_module_t *focused = darktable.develop->gui_module;
+  if(focused && focused->blend_params
+     && focused->blend_params->mask_id == group->formid
+     && (focused->blend_params->mask_mode & DEVELOP_MASK_MASK)
+     && !(focused->blend_params->mask_mode & DEVELOP_MASK_RASTER))
+    return focused;
+  return module;
+}
+
+static GtkWidget *_essentials_find_slider(GtkWidget *widget, const gpointer field)
+{
+  if(DT_IS_BAUHAUS_WIDGET(widget)
+     && dt_bauhaus_widget_get_type(widget) == DT_BAUHAUS_SLIDER
+     && dt_bauhaus_widget_get_field(widget) == field)
+    return widget;
+  if(!GTK_IS_CONTAINER(widget)) return NULL;
+  GList *children = gtk_container_get_children(GTK_CONTAINER(widget));
+  GtkWidget *found = NULL;
+  for(GList *l = children; l && !found; l = g_list_next(l))
+    found = _essentials_find_slider(l->data, field);
+  g_list_free(children);
+  return found;
+}
+
+static dt_iop_module_t *_essentials_adjustment_module(dt_iop_module_t *source,
+                                                     const char *op)
+{
+  if(!source) return NULL;
+  const dt_mask_id_t id = source->blend_params->mask_id;
+  for(GList *l = darktable.develop->iop; l; l = g_list_next(l))
+  {
+    dt_iop_module_t *module = l->data;
+    if(dt_iop_module_is(module, op) && module->blend_params
+       && module->blend_params->mask_id == id
+       && (module->blend_params->mask_mode & DEVELOP_MASK_MASK)
+       && !(module->blend_params->mask_mode & DEVELOP_MASK_RASTER))
+      return module;
+  }
+  return NULL;
+}
+
+static dt_iop_module_t *_essentials_base_module(const char *op)
+{
+  for(GList *l = darktable.develop->iop; l; l = g_list_next(l))
+  {
+    dt_iop_module_t *module = l->data;
+    if(dt_iop_module_is(module, op) && module->widget && module->blend_data
+       && (module->flags() & IOP_FLAGS_SUPPORTS_BLENDING)
+       && !(module->flags() & (IOP_FLAGS_ONE_INSTANCE | IOP_FLAGS_DEPRECATED))
+       && !dt_iop_is_hidden(module) && module->iop_order != INT_MAX
+       && !g_str_has_prefix(module->multi_name, "\xe2\x97\x86 "))
+      return module;
+  }
+  return NULL;
+}
+
+static GtkWidget *_essentials_parameter_slider(dt_iop_module_t *module, const char *field_name)
+{
+  if(!module || !module->widget || !module->so->get_p) return NULL;
+  gpointer field = module->so->get_p(module->params, field_name);
+  return field ? _essentials_find_slider(module->widget, field) : NULL;
+}
+
+static dt_iop_module_t *_essentials_ensure_adjustment(dt_iop_module_t *source,
+                                                     const char *op)
+{
+  dt_iop_module_t *module = _essentials_adjustment_module(source, op);
+  if(module) return module;
+  dt_iop_module_t *base = _essentials_base_module(op);
+  if(!source || !base) return NULL;
+
+  const dt_mask_id_t maskid = source->blend_params->mask_id;
+  const dt_mask_id_t selected = darktable.develop->mask_form_selected_id;
+  const dt_masks_form_t *group = dt_masks_get_from_id(darktable.develop, maskid);
+  if(!group || !group->points) return NULL;
+
+  module = dt_iop_gui_duplicate(base, FALSE);
+  if(!module) return NULL;
+  if(g_str_has_prefix(source->multi_name, "\xe2\x97\x86 "))
+    g_strlcpy(module->multi_name, source->multi_name, sizeof(module->multi_name));
+  else
+    g_snprintf(module->multi_name, sizeof(module->multi_name), "\xe2\x97\x86 %s", group->name);
+  module->multi_name_hand_edited = TRUE;
+
+  // share the group itself so added shapes and group operations reach every
+  // adjustment; copying the current list would stop following later edits
+  dt_develop_blend_params_t blend = *module->default_blendop_params;
+  blend.mask_mode = DEVELOP_MASK_ENABLED | DEVELOP_MASK_MASK;
+  blend.mask_id = maskid;
+  dt_iop_commit_blend_params(module, &blend, NULL);
+  module->enabled = FALSE;
+  DT_ENTER_GUI_UPDATE();
+  dt_iop_gui_update(module);
+  dt_iop_gui_update_header(module);
+  DT_LEAVE_GUI_UPDATE();
+  dt_dev_add_history_item(darktable.develop, module, FALSE);
+  dt_dev_modulegroups_update_visibility(darktable.develop);
+  dt_dev_masks_list_change(darktable.develop);
+  dt_dev_masks_selection_change(darktable.develop, source,
+                                dt_is_valid_maskid(selected) ? selected : maskid);
+  return module;
+}
+
+static void _essentials_slider_changed(GtkWidget *widget, dt_lib_masks_t *d)
+{
+  DT_GUARD_GUI_UPDATE();
+  if(d->essentials_updating) return;
+  dt_iop_module_t *source = _essentials_selected_module(d);
+  if(!source) return;
+  const int i = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget), "essentials-field"));
+  const int a = _essentials_fields[i].adjustment;
+  const float value = dt_bauhaus_slider_get(widget);
+  dt_iop_module_t *module = _essentials_adjustment_module(source, _essentials_adjustments[a].op);
+  const gboolean create = module == NULL;
+  d->essentials_updating = TRUE;
+  if(create)
+  {
+    dt_dev_undo_start_record(darktable.develop);
+    module = _essentials_ensure_adjustment(source, _essentials_adjustments[a].op);
+  }
+  GtkWidget *slider = _essentials_parameter_slider(module, _essentials_fields[i].field);
+  if(slider) dt_bauhaus_slider_set(slider, value);
+  if(create) dt_dev_undo_end_record(darktable.develop);
+  d->essentials_updating = FALSE;
+  _essentials_update_adjustments(d);
+}
+
+static void _essentials_enabled_toggled(GtkToggleButton *button, dt_lib_masks_t *d)
+{
+  DT_GUARD_GUI_UPDATE();
+  if(d->essentials_updating) return;
+  dt_iop_module_t *source = _essentials_selected_module(d);
+  if(!source) return;
+  const int a = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "essentials-adjustment"));
+  const gboolean active = gtk_toggle_button_get_active(button);
+  const dt_mask_id_t selected = darktable.develop->mask_form_selected_id;
+  dt_iop_module_t *module = _essentials_adjustment_module(source, _essentials_adjustments[a].op);
+  const gboolean create = active && !module;
+  d->essentials_updating = TRUE;
+  if(create)
+  {
+    dt_dev_undo_start_record(darktable.develop);
+    module = _essentials_ensure_adjustment(source, _essentials_adjustments[a].op);
+  }
+  if(module && module->off)
+  {
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(module->off), active);
+    dt_dev_masks_selection_change(darktable.develop, module,
+        dt_is_valid_maskid(selected) ? selected : source->blend_params->mask_id);
+  }
+  if(create) dt_dev_undo_end_record(darktable.develop);
+  d->essentials_updating = FALSE;
+  _essentials_update_adjustments(d);
+}
+
+static void _essentials_overlay_toggled(GtkToggleButton *button, dt_lib_masks_t *d)
+{
+  DT_GUARD_GUI_UPDATE();
+  dt_iop_module_t *module = _essentials_selected_module(d);
+  if(!module) return;
+  const gboolean active = gtk_toggle_button_get_active(button);
+  module->request_mask_display &= ~(DT_DEV_PIXELPIPE_DISPLAY_MASK
+                                    | DT_DEV_PIXELPIPE_DISPLAY_CHANNEL
+                                    | DT_DEV_PIXELPIPE_DISPLAY_ANY);
+  if(active) module->request_mask_display |= DT_DEV_PIXELPIPE_DISPLAY_MASK;
+  if(active && module->off)
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(module->off), TRUE);
+  DT_ENTER_GUI_UPDATE();
+  const dt_iop_gui_blend_data_t *bd = module->blend_data;
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(bd->showmask), active);
+  if(module->mask_indicator)
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(module->mask_indicator), active);
+  DT_LEAVE_GUI_UPDATE();
+  dt_iop_refresh_center(module);
+}
+
+static void _essentials_advanced_clicked(GtkButton *button, dt_lib_masks_t *d)
+{
+  DT_GUARD_GUI_UPDATE();
+  dt_iop_module_t *source = _essentials_selected_module(d);
+  if(!source || d->essentials_updating) return;
+  const int a = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "essentials-adjustment"));
+  const dt_mask_id_t selected = darktable.develop->mask_form_selected_id;
+  d->essentials_updating = TRUE;
+  dt_iop_module_t *module = _essentials_adjustment_module(source, _essentials_adjustments[a].op);
+  if(!module)
+  {
+    dt_dev_undo_start_record(darktable.develop);
+    module = _essentials_ensure_adjustment(source, _essentials_adjustments[a].op);
+    dt_dev_undo_end_record(darktable.develop);
+  }
+  d->essentials_updating = FALSE;
+  if(module)
+  {
+    dt_dev_modulegroups_switch(darktable.develop, module);
+    dt_dev_masks_selection_change(darktable.develop, module,
+        dt_is_valid_maskid(selected) ? selected : source->blend_params->mask_id);
+  }
+}
+
+static void _essentials_update_adjustments(dt_lib_masks_t *d)
+{
+  if(!d->essentials_adjustments || d->essentials_updating) return;
+  const gboolean essentials = dt_essentials_mode_is_active();
+  gtk_widget_set_visible(d->essentials_adjustments, essentials);
+  dt_gui_collapsible_section_set_label(&d->cs, essentials ? _("shape settings") : _("properties"));
+  if(!essentials) return;
+
+  dt_iop_module_t *source = _essentials_selected_module(d);
+  dt_iop_module_t *modules[G_N_ELEMENTS(_essentials_adjustments)];
+  dt_iop_module_t *references[G_N_ELEMENTS(_essentials_adjustments)];
+  DT_ENTER_GUI_UPDATE();
+  for(int a = 0; a < G_N_ELEMENTS(_essentials_adjustments); a++)
+  {
+    modules[a] = _essentials_adjustment_module(source, _essentials_adjustments[a].op);
+    references[a] = modules[a] ? modules[a] : _essentials_base_module(_essentials_adjustments[a].op);
+    const gboolean available = source && references[a];
+    gtk_widget_set_sensitive(d->essentials_enabled[a], available);
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(d->essentials_enabled[a]),
+                                 modules[a] && modules[a]->enabled);
+    gtk_widget_set_sensitive(d->essentials_full[a], available);
+  }
+  for(int i = 0; i < G_N_ELEMENTS(_essentials_fields); i++)
+  {
+    const int a = _essentials_fields[i].adjustment;
+    GtkWidget *slider = _essentials_parameter_slider(references[a], _essentials_fields[i].field);
+    GtkWidget *proxy = d->essentials_sliders[i];
+    gtk_widget_set_sensitive(proxy, source && slider);
+    if(!slider) continue;
+    dt_bauhaus_slider_set_hard_min(proxy, dt_bauhaus_slider_get_hard_min(slider));
+    dt_bauhaus_slider_set_hard_max(proxy, dt_bauhaus_slider_get_hard_max(slider));
+    dt_bauhaus_slider_set_soft_range(proxy, dt_bauhaus_slider_get_soft_min(slider),
+                                    dt_bauhaus_slider_get_soft_max(slider));
+    dt_bauhaus_slider_set_step(proxy, dt_bauhaus_slider_get_step(slider));
+    dt_bauhaus_slider_set_digits(proxy, dt_bauhaus_slider_get_digits(slider));
+    dt_bauhaus_slider_set_default(proxy, dt_bauhaus_slider_get_default(slider));
+    dt_bauhaus_slider_set(proxy, modules[a] ? dt_bauhaus_slider_get(slider)
+                                          : dt_bauhaus_slider_get_default(slider));
+    gchar *tooltip = gtk_widget_get_tooltip_text(slider);
+    gtk_widget_set_tooltip_text(proxy, tooltip);
+    g_free(tooltip);
+  }
+  gtk_widget_set_sensitive(d->essentials_overlay, source != NULL);
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(d->essentials_overlay),
+                               source && (source->request_mask_display & DT_DEV_PIXELPIPE_DISPLAY_MASK));
+  gtk_label_set_text(GTK_LABEL(d->essentials_hint), source
+      ? _("adjustments share this mask; changing a control enables its adjustment")
+      : _("draw or select a mask to adjust that area"));
+  DT_LEAVE_GUI_UPDATE();
+}
+
+static void _essentials_init_adjustments(dt_lib_module_t *self)
+{
+  dt_lib_masks_t *d = self->data;
+  d->essentials_overlay = gtk_check_button_new_with_label(_("show overlay"));
+  g_signal_connect(d->essentials_overlay, "toggled", G_CALLBACK(_essentials_overlay_toggled), d);
+  d->essentials_hint = dt_ui_label_new(_("draw or select a mask to adjust that area"));
+  gtk_label_set_line_wrap(GTK_LABEL(d->essentials_hint), TRUE);
+  d->essentials_adjustments = dt_gui_vbox(d->essentials_overlay,
+      dt_ui_section_label_new(_("local adjustments")), d->essentials_hint);
+  gtk_widget_set_name(d->essentials_adjustments, "essentials-mask-adjustments");
+  for(int a = 0; a < G_N_ELEMENTS(_essentials_adjustments); a++)
+  {
+    GtkWidget *section = gtk_expander_new(NULL);
+    dt_gui_add_class(section, "essentials-local-section");
+    GtkWidget *title = dt_ui_label_new(_(_essentials_adjustments[a].label));
+    GtkWidget *enabled = gtk_check_button_new_with_label(_("on"));
+    gchar *enabled_name = g_strdup_printf("essentials-local-enable-%s", _essentials_adjustments[a].op);
+    gtk_widget_set_name(enabled, enabled_name);
+    g_free(enabled_name);
+    gtk_widget_set_tooltip_text(enabled, _("enable or disable this adjustment for the selected mask"));
+    d->essentials_enabled[a] = enabled;
+    g_object_set_data(G_OBJECT(enabled), "essentials-adjustment", GINT_TO_POINTER(a));
+    g_signal_connect(enabled, "toggled", G_CALLBACK(_essentials_enabled_toggled), d);
+    gtk_expander_set_label_widget(GTK_EXPANDER(section), dt_gui_hbox(dt_gui_expand(title), enabled));
+    gtk_expander_set_label_fill(GTK_EXPANDER(section), TRUE);
+    GtkWidget *box = dt_gui_vbox();
+    gtk_container_add(GTK_CONTAINER(section), box);
+    gtk_expander_set_expanded(GTK_EXPANDER(section), _essentials_adjustments[a].expanded);
+    const char *group = NULL;
+    GtkWidget *field_box = box;
+    for(int i = 0; i < G_N_ELEMENTS(_essentials_fields); i++)
+    {
+      if(_essentials_fields[i].adjustment != a) continue;
+      if(g_strcmp0(group, _essentials_fields[i].group))
+      {
+        group = _essentials_fields[i].group;
+        GtkWidget *grading = gtk_expander_new(_(group));
+        field_box = dt_gui_vbox();
+        gtk_container_add(GTK_CONTAINER(grading), field_box);
+        dt_gui_box_add(box, grading);
+      }
+      GtkWidget *slider = dt_bauhaus_slider_new_action(DT_ACTION(self), -1, 1, 0.01, 0, 4);
+      d->essentials_sliders[i] = slider;
+      dt_bauhaus_widget_set_label(slider, group ? _(group) : _(_essentials_adjustments[a].label),
+                                  _(_essentials_fields[i].label));
+      dt_bauhaus_slider_set_format(slider, *_essentials_fields[i].format
+                                           ? _(_essentials_fields[i].format) : "");
+      dt_bauhaus_slider_set_offset(slider, _essentials_fields[i].offset);
+      if(!strcmp(_essentials_fields[i].field, "filter_iterations"))
+        dt_bauhaus_slider_set_digits(slider, 0);
+      gchar *widget_name = g_strdup_printf("essentials-local-%s-%s",
+                                            _essentials_adjustments[a].op, _essentials_fields[i].field);
+      gtk_widget_set_name(slider, widget_name);
+      g_free(widget_name);
+      g_object_set_data(G_OBJECT(slider), "essentials-field", GINT_TO_POINTER(i));
+      g_signal_connect(slider, "value-changed", G_CALLBACK(_essentials_slider_changed), d);
+      dt_gui_box_add(field_box, slider);
+    }
+    GtkWidget *full = gtk_button_new_with_label(_("all controls..."));
+    gtk_widget_set_tooltip_text(full, _("open all controls for this adjustment, using the selected mask"));
+    gchar *full_name = g_strdup_printf("essentials-local-full-%s", _essentials_adjustments[a].op);
+    gtk_widget_set_name(full, full_name);
+    g_free(full_name);
+    d->essentials_full[a] = full;
+    g_object_set_data(G_OBJECT(full), "essentials-adjustment", GINT_TO_POINTER(a));
+    g_signal_connect(full, "clicked", G_CALLBACK(_essentials_advanced_clicked), d);
+    dt_gui_box_add(box, full);
+    dt_gui_box_add(d->essentials_adjustments, section);
+  }
+  dt_gui_box_add(self->widget, d->essentials_adjustments);
+  gtk_widget_show_all(d->essentials_adjustments);
+  gtk_widget_set_no_show_all(d->essentials_adjustments, TRUE);
+  gtk_widget_hide(d->essentials_adjustments);
+}
+
+static void _essentials_history_changed(gpointer instance, dt_lib_module_t *self)
+{
+  if(dt_essentials_mode_is_active()) dt_lib_gui_queue_update(self);
 }
 
 static void _lib_masks_inactivate_icons(dt_lib_module_t *self)
@@ -1163,6 +1583,18 @@ static void _tree_cell_edited(GtkCellRendererText *cell,
 static void _tree_selection_change(GtkTreeSelection *selection, dt_lib_masks_t *self)
 {
   DT_GUARD_GUI_UPDATE();
+  dt_iop_module_t *selected_module = _essentials_selected_module(self);
+  if(selected_module && darktable.develop->gui_module != selected_module)
+  {
+    // changing IOP focus clears the mask selection; keep the rows the user chose
+    GList *rows = gtk_tree_selection_get_selected_rows(selection, NULL);
+    dt_iop_request_focus(selected_module);
+    DT_ENTER_GUI_UPDATE();
+    for(GList *l = rows; l; l = g_list_next(l))
+      gtk_tree_selection_select_path(selection, l->data);
+    DT_LEAVE_GUI_UPDATE();
+    g_list_free_full(rows, (GDestroyNotify)gtk_tree_path_free);
+  }
   // we reset all "show mask" icon of iops
   dt_masks_reset_show_masks_icons();
 
@@ -1790,6 +2222,18 @@ static void _lib_masks_list_recurs(GtkTreeStore *treestore,
   }
 }
 
+static gboolean _matches_mask_module(const dt_iop_module_t *module, const dt_iop_module_t *row)
+{
+  if(!module) return TRUE;
+  if(!row || !g_list_find(darktable.develop->iop, module)
+     || !g_list_find(darktable.develop->iop, row))
+    return FALSE;
+  return dt_iop_module_is(module, row->op)
+    || (module->blend_params && row->blend_params
+        && dt_is_valid_maskid(module->blend_params->mask_id)
+        && module->blend_params->mask_id == row->blend_params->mask_id);
+}
+
 gboolean _find_mask_iter_by_values(GtkTreeModel *model,
                                    GtkTreeIter *iter,
                                    const dt_iop_module_t *module,
@@ -1803,7 +2247,7 @@ gboolean _find_mask_iter_by_values(GtkTreeModel *model,
     _lib_masks_get_values(model, iter, &mod, NULL, &fid);
     gboolean found = (fid == formid)
       && ((level == 1)
-          || (module == NULL || (mod && dt_iop_module_is(module, mod->op))));
+          || _matches_mask_module(module, mod));
     if(found) return found;
 
     GtkTreeIter child, parent = *iter;
@@ -1910,6 +2354,7 @@ void gui_update(dt_lib_module_t *self)
     GtkTreeModel *model = gtk_tree_view_get_model(GTK_TREE_VIEW(lm->treeview));
     if(model)
       gtk_tree_model_foreach(model, _update_foreach, lm);
+    _essentials_update_adjustments(lm);
     DT_LEAVE_GUI_UPDATE();
     return;
   }
@@ -2033,6 +2478,8 @@ void gui_update(dt_lib_module_t *self)
   // served in place (see the early-out at the top of this function).
   lm->tree_hash = newhash;
   lm->tree_hash_valid = TRUE;
+
+  _essentials_update_adjustments(lm);
 
   DT_LEAVE_GUI_UPDATE();
 
@@ -2169,7 +2616,7 @@ static gboolean _lib_masks_selection_change_r(GtkTreeModel *model,
 
     if((id == selectid)
        && ((level == 1)
-           || (module == NULL || (mod && dt_iop_module_is(module, mod->op)))))
+           || _matches_mask_module(module, mod)))
     {
       gtk_tree_selection_select_iter(selection, &i);
       found = TRUE;
@@ -2238,14 +2685,13 @@ static void _lib_masks_selection_change(dt_lib_module_t *self,
 
   _update_all_properties(lm);
 
-  // a just-created shape is not in the tree yet (pending): rebuild the list now
-  // instead of waiting for the next lazy panel redraw. Otherwise the new row -
-  // and the panel reflow it causes - only appears the first time the user drags
-  // a property slider, making the sliders visibly jump. gui_update applies (and
-  // clears) the pending selection. dt_lib_gui_update is a no-op unless a rebuild
-  // was already queued (dt_dev_masks_list_change, which creation triggers).
+  // creation can request selection before a list update was queued; rebuild
+  // the missing row now so its controls are available without another edit
   if(dt_is_valid_maskid(lm->pending_selectid))
+  {
+    dt_lib_gui_queue_update(self);
     dt_lib_gui_update(self);
+  }
 }
 
 static GdkPixbuf *_get_pixbuf_from_cairo(DTGTKCairoPaintIconFunc paint,
@@ -2516,6 +2962,9 @@ void gui_init(dt_lib_module_t *self)
   darktable.develop->proxy.masks.list_update = _lib_masks_update_list;
   darktable.develop->proxy.masks.list_remove = _lib_masks_remove_item;
   darktable.develop->proxy.masks.selection_change = _lib_masks_selection_change;
+
+  _essentials_init_adjustments(self);
+  DT_CONTROL_SIGNAL_HANDLE(DT_SIGNAL_DEVELOP_HISTORY_CHANGE, _essentials_history_changed);
 }
 
 void gui_cleanup(dt_lib_module_t *self)

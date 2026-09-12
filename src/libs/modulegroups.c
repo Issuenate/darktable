@@ -27,7 +27,9 @@
 #include "common/presets.h"
 #include "control/conf.h"
 #include "control/control.h"
+#include "develop/blend.h"
 #include "develop/develop.h"
+#include "develop/masks.h"
 #include "dtgtk/button.h"
 #include "dtgtk/icon.h"
 #include "gui/accelerators.h"
@@ -53,6 +55,9 @@ DT_MODULE(1)
 #define T_CURRENT_PRESET_NAME _("last modified layout")
 
 #define ESSENTIALS_PRESET_NAME "workflow: essentials"
+
+// keep local instances out of the global Essentials controls
+#define ESSENTIALS_MASK_PREFIX "\xe2\x97\x86 " // "diamond space", U+25C6
 
 // list of recommended basics widgets
 #define RECOMMENDED_BASICS                                                                                        \
@@ -196,6 +201,11 @@ typedef struct dt_lib_modulegroups_t
   GtkWidget *essentials_title;
   GtkWidget *essentials_title_label;
   GtkWidget *essentials_back;
+  gboolean essentials_masks;
+  gboolean essentials_masks_return;
+  GtkWidget *essentials_masks_widget;
+  GtkWidget *essentials_masks_parent;
+  gboolean essentials_masks_visible;
   GtkWidget *deprecated;
   gboolean force_deprecated_message;
   GList *groups;
@@ -577,7 +587,27 @@ static void _basics_hide(dt_lib_module_t *self)
 {
   dt_lib_modulegroups_t *d = self->data;
   if(!d->vbox_basic) return;
+  GtkWidget *toplevel = gtk_widget_get_toplevel(d->vbox_basic);
+  if(GTK_IS_WINDOW(toplevel))
+  {
+    GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(toplevel));
+    // clear focus before reparenting controls or destroying the focused tool button
+    if(focus && (focus == d->vbox_basic || gtk_widget_is_ancestor(focus, d->vbox_basic)))
+      gtk_window_set_focus(GTK_WINDOW(toplevel), NULL);
+  }
   gtk_widget_hide(d->vbox_basic);
+
+  if(d->essentials_masks_widget)
+  {
+    GtkWidget *widget = d->essentials_masks_widget;
+    g_object_ref(widget);
+    gtk_container_remove(GTK_CONTAINER(gtk_widget_get_parent(widget)), widget);
+    gtk_container_add(GTK_CONTAINER(d->essentials_masks_parent), widget);
+    gtk_widget_set_visible(widget, d->essentials_masks_visible);
+    g_object_unref(widget);
+    g_clear_object(&d->essentials_masks_parent);
+    d->essentials_masks_widget = NULL;
+  }
 
   for(const GList *l = d->basics; l; l = g_list_next(l))
   {
@@ -991,12 +1021,22 @@ _basics_add_items_from_module_widget(dt_lib_module_t *self, dt_iop_module_t *mod
   return item_pos;
 }
 
+/* an instance created to carry a local mask, not one of the borrowed
+ * adjustments (see ESSENTIALS_MASK_PREFIX) */
+static gboolean _essentials_is_mask_carrier(const dt_iop_module_t *module)
+{
+  return module && g_str_has_prefix(module->multi_name, ESSENTIALS_MASK_PREFIX);
+}
+
 static dt_iop_module_t *_essentials_find_module(const char *op)
 {
   for(GList *modules = darktable.develop->iop; modules; modules = g_list_next(modules))
   {
     dt_iop_module_t *candidate = modules->data;
+    /* a mask carrier is an exposure instance too, but it must never stand in
+     * for the section's real module, or the light slider would drive the mask */
     if(!g_strcmp0(candidate->op, op)
+       && !_essentials_is_mask_carrier(candidate)
        && !dt_iop_is_hidden(candidate)
        && !(candidate->flags() & IOP_FLAGS_DEPRECATED)
        && candidate->iop_order != INT_MAX)
@@ -1014,6 +1054,8 @@ static void _essentials_set_tool(dt_lib_module_t *self,
                                  const char *label)
 {
   dt_lib_modulegroups_t *d = self->data;
+
+  d->essentials_masks = FALSE;
 
   if(module)
   {
@@ -1049,9 +1091,32 @@ static void _essentials_tool_clicked(GtkButton *button, dt_lib_module_t *self)
   if(module) _essentials_set_tool(self, module, _(tool->label));
 }
 
+static void _essentials_open_masks(dt_lib_module_t *self)
+{
+  dt_lib_modulegroups_t *d = self->data;
+  if(!d->essentials_masks) _basics_hide(self);
+  d->essentials_masks = TRUE;
+  d->essentials_masks_return = FALSE;
+  d->force_show_module = NULL;
+  d->current = DT_MODULEGROUP_ACTIVE_PIPE;
+  _lib_modulegroups_update_visibility_proxy(self);
+  dt_lib_gui_update(dt_lib_get_module("masks"));
+  gtk_label_set_text(GTK_LABEL(d->essentials_title_label), _("masks"));
+  gtk_widget_show(d->essentials_back);
+}
+
+static void _essentials_masks_clicked(GtkButton *button, dt_lib_module_t *self)
+{
+  _essentials_open_masks(self);
+}
+
 static void _essentials_back_clicked(GtkButton *button, dt_lib_module_t *self)
 {
-  _essentials_set_tool(self, NULL, NULL);
+  dt_lib_modulegroups_t *d = self->data;
+  if(d->essentials_masks_return)
+    _essentials_open_masks(self);
+  else
+    _essentials_set_tool(self, NULL, NULL);
 }
 
 /* append the tool rows belonging to one finished section */
@@ -1079,6 +1144,140 @@ static void _essentials_add_tools(dt_lib_module_t *self,
     gtk_box_pack_start(GTK_BOX(box), button, FALSE, FALSE, 0);
     gtk_widget_show_all(button);
   }
+}
+
+/* the mask sources offered in the editor. the drawn shapes are placed on the
+ * canvas; the AI sources segment the image and need no drawing */
+typedef struct dt_essentials_mask_source_t
+{
+  const char *label;
+  dt_masks_type_t shape;
+  dt_masks_object_selection_t object;
+  gboolean ai;
+} dt_essentials_mask_source_t;
+
+static const dt_essentials_mask_source_t _essentials_mask_sources[] = {
+  { N_("brush"),      DT_MASKS_BRUSH,    DT_MASKS_OBJECT_MANUAL,     FALSE },
+  { N_("radial"),     DT_MASKS_CIRCLE,   DT_MASKS_OBJECT_MANUAL,     FALSE },
+  { N_("linear"),     DT_MASKS_GRADIENT, DT_MASKS_OBJECT_MANUAL,     FALSE },
+#ifdef HAVE_AI
+  { N_("subject"),    DT_MASKS_OBJECT,   DT_MASKS_OBJECT_SUBJECT,    TRUE  },
+  { N_("sky"),        DT_MASKS_OBJECT,   DT_MASKS_OBJECT_SKY,        TRUE  },
+  { N_("background"), DT_MASKS_OBJECT,   DT_MASKS_OBJECT_BACKGROUND, TRUE  },
+#endif
+  { NULL, 0, DT_MASKS_OBJECT_MANUAL, FALSE }
+};
+
+/* duplicate a no-op exposure instance to carry the mask, name it, reveal it,
+ * and start the mask, mirroring blend_gui.c:_blendop_masks_create_shape() */
+static void _essentials_create_mask(dt_lib_module_t *self,
+                                    const dt_essentials_mask_source_t *src)
+{
+#ifdef HAVE_AI
+  if(src->ai && !dt_masks_object_available())
+  {
+    dt_control_log(_("AI model is not available. Check preferences > AI"));
+    return;
+  }
+#endif
+  dt_iop_module_t *base = _essentials_find_module("exposure");
+  if(!base)
+  {
+    dt_toast_log(_("the exposure module is unavailable"));
+    return;
+  }
+  dt_iop_module_t *carrier = dt_iop_gui_duplicate(base, FALSE);
+  if(!carrier) return;
+
+  g_snprintf(carrier->multi_name, sizeof(carrier->multi_name), "%s%s",
+             ESSENTIALS_MASK_PREFIX, _(src->label));
+  carrier->multi_name_hand_edited = TRUE;
+  dt_iop_gui_update_header(carrier);
+
+  _essentials_open_masks(self);
+
+  // the shared blend path keeps mode buttons and mask creation state in sync
+  dt_iop_gui_blend_start_mask(carrier, src->shape, src->object);
+  dt_dev_masks_list_change(darktable.develop);
+  dt_lib_modulegroups_t *d = self->data;
+  GtkWidget *sources = g_object_get_data(G_OBJECT(d->vbox_basic), "essentials-mask-sources");
+  if(sources) gtk_expander_set_expanded(GTK_EXPANDER(sources), FALSE);
+}
+
+static void _essentials_add_mask_clicked(GtkButton *button, dt_lib_module_t *self)
+{
+  const dt_essentials_mask_source_t *src =
+    g_object_get_data(G_OBJECT(button), "essentials-mask-source");
+  if(src) _essentials_create_mask(self, src);
+}
+
+static void _essentials_add_masks_section(dt_lib_module_t *self, GtkWidget *parent)
+{
+  GtkWidget *section = gtk_expander_new(_("masks"));
+  gtk_widget_set_name(section, "essentials-edit-section");
+  gtk_expander_set_expanded(GTK_EXPANDER(section), TRUE);
+  GtkWidget *box = dt_gui_vbox();
+  gtk_container_add(GTK_CONTAINER(section), box);
+  GtkWidget *button = gtk_button_new_with_label(_("masks..."));
+  gtk_widget_set_name(button, "essentials-tool");
+  gtk_widget_set_tooltip_text(button, _("create a mask, edit its shape, and adjust only that area"));
+  g_signal_connect(button, "clicked", G_CALLBACK(_essentials_masks_clicked), self);
+  dt_gui_box_add(box, button);
+  dt_gui_box_add(parent, section);
+  gtk_widget_show_all(section);
+}
+
+static void _essentials_show_masks(dt_lib_module_t *self)
+{
+  dt_lib_modulegroups_t *d = self->data;
+  if(d->vbox_basic) return;
+
+  dt_lib_module_t *masks = dt_lib_get_module("masks");
+  if(!masks || !masks->widget) return;
+
+  d->vbox_basic = dt_gui_vbox();
+  gtk_widget_set_name(d->vbox_basic, "essentials-mask-editor");
+  dt_gui_add_class(d->vbox_basic, "dt_plugin_ui");
+  dt_ui_container_add_widget(darktable.gui->ui, DT_UI_CONTAINER_PANEL_RIGHT_CENTER, d->vbox_basic);
+  GtkWidget *sources = gtk_expander_new(_("new mask"));
+  gtk_expander_set_expanded(GTK_EXPANDER(sources), darktable.develop->forms == NULL);
+  g_object_set_data(G_OBJECT(d->vbox_basic), "essentials-mask-sources", sources);
+  GtkWidget *add = gtk_grid_new();
+  gtk_grid_set_column_homogeneous(GTK_GRID(add), TRUE);
+  gtk_grid_set_column_spacing(GTK_GRID(add), DT_PIXEL_APPLY_DPI(4));
+  gtk_grid_set_row_spacing(GTK_GRID(add), DT_PIXEL_APPLY_DPI(4));
+  gtk_widget_set_name(add, "essentials-mask-sources");
+#ifdef HAVE_AI
+  const gboolean ai_ok = dt_masks_object_available();
+#else
+  const gboolean ai_ok = FALSE;
+#endif
+  int position = 0;
+  for(const dt_essentials_mask_source_t *src = _essentials_mask_sources; src->label; src++, position++)
+  {
+    GtkWidget *button = gtk_button_new_with_label(_(src->label));
+    gtk_widget_set_sensitive(button, !src->ai || ai_ok);
+    gtk_widget_set_tooltip_text(button, src->ai && !ai_ok
+        ? _("AI model is not available. Check preferences > AI")
+        : _("add a mask from this source"));
+    g_object_set_data(G_OBJECT(button), "essentials-mask-source", (gpointer)src);
+    g_signal_connect(button, "clicked", G_CALLBACK(_essentials_add_mask_clicked), self);
+    gtk_grid_attach(GTK_GRID(add), button, position % 3, position / 3, 1, 1);
+  }
+  gtk_container_add(GTK_CONTAINER(sources), add);
+  dt_gui_box_add(d->vbox_basic, sources);
+  gtk_widget_show_all(d->vbox_basic);
+
+  // restore this shared widget before destroying the page or leaving darkroom
+  d->essentials_masks_widget = masks->widget;
+  d->essentials_masks_parent = g_object_ref(gtk_widget_get_parent(masks->widget));
+  d->essentials_masks_visible = gtk_widget_get_visible(masks->widget);
+  g_object_ref(masks->widget);
+  gtk_container_remove(GTK_CONTAINER(d->essentials_masks_parent), masks->widget);
+  dt_gui_box_add(d->vbox_basic, masks->widget);
+  g_object_unref(masks->widget);
+  gtk_widget_show(masks->widget);
+  dt_lib_gui_queue_update(masks);
 }
 
 static void _basics_show(dt_lib_module_t *self)
@@ -1111,6 +1310,8 @@ static void _basics_show(dt_lib_module_t *self)
 
   if(dt_essentials_mode_is_active())
   {
+    _essentials_add_masks_section(self, d->vbox_basic);
+
     const char *current_section = NULL;
     GtkWidget *section_box = NULL;
     for(const dt_essentials_module_spec_t *spec = _essentials_modules; spec->section; spec++)
@@ -1201,6 +1402,8 @@ static uint32_t _lib_modulegroups_get_activated(dt_lib_module_t *self)
 {
   dt_lib_modulegroups_t *d = self->data;
 
+  if(d->essentials_masks) return DT_MODULEGROUP_ACTIVE_PIPE;
+
   // we get the current group and verify that it is effectively activated
   // this can not be the case if we are in search mode
   GtkWidget *bt = _buttons_get_from_pos(self, d->current);
@@ -1233,10 +1436,11 @@ static void _lib_modulegroups_update_iop_visibility(dt_lib_module_t *self)
   if(dt_essentials_mode_is_active()
      && d->basics_show
      && d->current != DT_MODULEGROUP_BASICS
-     && !d->force_show_module)
+     && !d->force_show_module
+     && !d->essentials_masks)
     d->current = DT_MODULEGROUP_BASICS;
 
-  _basics_hide(self);
+  if(!d->essentials_masks) _basics_hide(self);
 
   // if we have a module to force or still have none selected, set d-current to active pipe
   // note: DT_MODULEGROUP_NONE ("all modules", reached by clicking the active group
@@ -1287,6 +1491,12 @@ static void _lib_modulegroups_update_iop_visibility(dt_lib_module_t *self)
 
       /* skip modules without an gui */
       if(dt_iop_is_hidden(module)) continue;
+
+      if(d->essentials_masks)
+      {
+        if(w) gtk_widget_hide(w);
+        continue;
+      }
 
       // do not show non-active modules
       // we don't want the user to mess with those
@@ -1395,7 +1605,10 @@ static void _lib_modulegroups_update_iop_visibility(dt_lib_module_t *self)
   }
 
   // we show eventual basic panel but only if no text in the search box
-  if(d->current == DT_MODULEGROUP_BASICS && !(text_entered && text_entered[0] != '\0')) _basics_show(self);
+  if(d->essentials_masks)
+    _essentials_show_masks(self);
+  else if(d->current == DT_MODULEGROUP_BASICS && !(text_entered && text_entered[0] != '\0'))
+    _basics_show(self);
 }
 
 /* switch to the given group, or to the all modules view for DT_MODULEGROUP_NONE,
@@ -1532,6 +1745,12 @@ static void _lib_modulegroups_switch_group(dt_lib_module_t *self, dt_iop_module_
 {
   /* lets find the group which is not active pipe */
   dt_lib_modulegroups_t *d = self->data;
+  if(d->essentials_masks)
+  {
+    d->essentials_masks_return = TRUE;
+    _essentials_set_tool(self, module, module->name());
+    return;
+  }
   const int ngroups = g_list_length(d->groups);
   for(int k = 1; k <= ngroups; k++)
   {
@@ -4923,6 +5142,8 @@ void view_leave(dt_lib_module_t *self,
   {
     dt_lib_modulegroups_t *d = self->data;
     d->force_show_module = NULL;
+    d->essentials_masks = FALSE;
+    d->essentials_masks_return = FALSE;
     _basics_hide(self);
   }
 }
@@ -4932,6 +5153,8 @@ static void _set_experience_chrome(dt_lib_modulegroups_t *d, const gboolean esse
   /* the tool rows only exist in Essentials, so a tool must never survive into
    * the Advanced panel, where nothing would offer a way back */
   d->force_show_module = NULL;
+  d->essentials_masks = FALSE;
+  d->essentials_masks_return = FALSE;
   gtk_label_set_text(GTK_LABEL(d->essentials_title_label), _("edit"));
   gtk_widget_set_visible(d->essentials_back, FALSE);
   gtk_widget_set_visible(d->essentials_title, essentials);

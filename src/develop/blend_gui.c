@@ -1691,6 +1691,52 @@ static void _blendop_masks_create_shape(GtkWidget *widget,
   dt_control_queue_redraw_center();
 }
 
+// map the shape to its native button: mask enum values do not match button indices
+void dt_iop_gui_blend_start_mask(dt_iop_module_t *module,
+                                 const dt_masks_type_t shape,
+                                 const dt_masks_object_selection_t object)
+{
+  dt_iop_gui_blend_data_t *bd = module->blend_data;
+  if(!bd || !bd->masks_inited) return;
+
+  int this = -1;
+  for(int n = 0; n < DEVELOP_MASKS_NB_SHAPES; n++)
+    if(bd->masks_type[n] == shape)
+    {
+      this = n;
+      break;
+    }
+  if(this < 0) return;
+
+#ifdef HAVE_AI
+  if(bd->masks_type[this] == DT_MASKS_OBJECT && !dt_masks_object_available())
+  {
+    dt_control_log(_("AI model is not available. Check preferences > AI"));
+    return;
+  }
+#endif
+
+  /* enable the drawn mask through the normal blend path so mask_mode, the mask
+   * indicator, selected_mask_mode and the enabling history item stay consistent */
+  _blendop_masks_modes_toggle(NULL, module, DEVELOP_MASK_MASK);
+
+  for(int n = 0; n < DEVELOP_MASKS_NB_SHAPES; n++)
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(bd->masks_shapes[n]), FALSE);
+
+  dt_iop_request_focus(module);
+  dt_iop_color_picker_reset(module, FALSE);
+  bd->masks_shown = DT_MASKS_EDIT_FULL;
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(bd->masks_shapes[this]), TRUE);
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(bd->masks_edit), FALSE);
+
+  dt_masks_form_t *form = dt_masks_create(shape);
+  dt_masks_change_form_gui(form);
+  darktable.develop->form_gui->creation_module = module;
+  darktable.develop->form_gui->object_selection = object;
+
+  dt_control_queue_redraw_center();
+}
+
 static void _blendop_masks_add_shape(GtkGestureSingle *gesture,
                                       gint n_press,
                                       gdouble x,

@@ -2089,6 +2089,68 @@ filechooser row:hover .sidebar-icon
   background-color: #1b1e21;
 }
 
+#right #essentials-mask-editor
+{
+  padding: 12px 14px 18px;
+  background-color: #1b1e21;
+}
+
+#right #essentials-mask-sources button
+{
+  min-height: 38px;
+  padding: 6px 10px;
+  border: 1px solid #41464c;
+  border-radius: 6px;
+  background-image: none;
+  background-color: #252a2f;
+  color: #e4e7eb;
+}
+
+#right #essentials-mask-sources button:hover,
+#right #essentials-mask-sources button:focus
+{
+  border-color: #aeb7c1;
+  background-color: #333a42;
+}
+
+#right #essentials-mask-sources button:disabled
+{
+  color: #7b828a;
+  background-color: #202428;
+}
+
+#right #essentials-mask-editor .dt_section_label
+{
+  padding: 8px 0;
+  color: #eceff1;
+  font-weight: 600;
+}
+
+#right #essentials-mask-adjustments
+{
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #34383d;
+}
+
+#right #essentials-mask-adjustments button
+{
+  min-height: 30px;
+  margin-top: 8px;
+}
+
+#right #essentials-mask-adjustments .essentials-local-section
+{
+  margin-top: 0.6em;
+  padding-top: 0.4em;
+  border-top: 1px solid @border_color;
+}
+
+#right #essentials-mask-adjustments .essentials-local-section > title
+{
+  padding: 0.35em 0;
+}
+
 #right.essentials-panel #main-histogram
 {
   min-height: 132px;

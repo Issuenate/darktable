@@ -1950,6 +1950,7 @@ void dt_masks_form_remove(dt_iop_module_t *module,
   // if we are here that mean we have to permanently delete this form
   // we drop the form from all modules
   gboolean form_removed = FALSE;
+  gboolean enable_module = TRUE;
   for(GList *iops = darktable.develop->iop; iops; iops = g_list_next(iops))
   {
     dt_iop_module_t *m = iops->data;
@@ -1958,9 +1959,23 @@ void dt_masks_form_remove(dt_iop_module_t *module,
       // is the form the base group of the iop ?
       if(id == m->blend_params->mask_id)
       {
+        // an Essentials local adjustment must not become global when its last
+        // shape is removed; the Essentials mask editor marks its local instances
+        const gboolean local_adjustment = g_str_has_prefix(m->multi_name, "\xe2\x97\x86 ");
         m->blend_params->mask_id = NO_MASKID;
+        if(local_adjustment)
+        {
+          m->enabled = FALSE;
+          if(m == module) enable_module = FALSE;
+          if(darktable.develop->gui_attached)
+          {
+            DT_ENTER_GUI_UPDATE();
+            dt_iop_gui_set_enable_button(m);
+            DT_LEAVE_GUI_UPDATE();
+          }
+        }
         dt_masks_iop_update(m);
-        dt_dev_add_history_item(darktable.develop, m, TRUE);
+        dt_dev_add_history_item(darktable.develop, m, !local_adjustment);
       }
       else
       {
@@ -1986,7 +2001,11 @@ void dt_masks_form_remove(dt_iop_module_t *module,
           {
             form_removed = TRUE;
             dt_masks_iop_update(m);
-            if(iopgrp->points == NULL) dt_masks_form_remove(m, NULL, iopgrp);
+            if(iopgrp->points == NULL)
+            {
+              dt_masks_form_remove(m, NULL, iopgrp);
+              if(m == module) enable_module = m->enabled;
+            }
           }
         }
       }
@@ -2003,7 +2022,7 @@ void dt_masks_form_remove(dt_iop_module_t *module,
       break;
     }
   }
-  if(form_removed) dt_dev_add_masks_history_item(darktable.develop, module, TRUE);
+  if(form_removed) dt_dev_add_masks_history_item(darktable.develop, module, enable_module);
 }
 
 float dt_masks_form_change_opacity(dt_masks_form_t *form,
