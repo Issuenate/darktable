@@ -503,6 +503,13 @@ void dt_iop_gui_init_blending(GtkWidget *iopw, dt_iop_module_t *module);
 void dt_iop_gui_update_blending(dt_iop_module_t *module);
 void dt_iop_gui_update_blendif(dt_iop_module_t *module);
 void dt_iop_gui_update_masks(dt_iop_module_t *module);
+/* start drawing a new mask of `shape` on `module`, wiring up the full
+   blend/mask creation state (mask mode, edit mode, shape button, creation
+   form) so callers cannot leave it half-initialized. `object` selects an AI
+   object class for DT_MASKS_OBJECT, and is DT_MASKS_OBJECT_MANUAL otherwise */
+void dt_iop_gui_blend_start_mask(dt_iop_module_t *module,
+                                 dt_masks_type_t shape,
+                                 dt_masks_object_selection_t object);
 void dt_iop_gui_cleanup_blending(dt_iop_module_t *module);
 void dt_iop_gui_blending_lose_focus(dt_iop_module_t *module);
 void dt_iop_gui_blending_reload_defaults(dt_iop_module_t *module);
