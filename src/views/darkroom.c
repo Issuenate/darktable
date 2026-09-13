@@ -1282,6 +1282,27 @@ void reset(dt_view_t *self)
   dt_dev_zoom_move(&darktable.develop->full, DT_ZOOM_FIT, 0.0f, 0, -1.0f, -1.0f, TRUE);
 }
 
+// a failed darkroom open is reported with a log line, which is easy to miss
+// when the user is waiting for the editor to appear. in essentials, where the
+// image list is the whole interface, also raise a modal dialog explaining why
+// nothing opened. advanced keeps the log alone: a blocking dialog per failure
+// would get in the way of opening many images at once
+static void _darkroom_cannot_open_dialog(const char *secondary)
+{
+  if(!dt_essentials_mode_is_active()) return;
+  GtkWidget *dialog = gtk_message_dialog_new(
+    GTK_WINDOW(dt_ui_main_window(darktable.gui->ui)),
+    GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+    GTK_MESSAGE_ERROR, GTK_BUTTONS_CLOSE, "%s", _("cannot open photo for editing"));
+  gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog), "%s", secondary);
+  dt_gui_dialog_apply_experience(dialog);
+#ifdef GDK_WINDOWING_QUARTZ
+  dt_osx_disallow_fullscreen(dialog);
+#endif
+  g_signal_connect_swapped(dialog, "response", G_CALLBACK(gtk_widget_destroy), dialog);
+  gtk_widget_show_all(dialog);
+}
+
 gboolean try_enter(dt_view_t *self)
 {
   dt_imgid_t imgid = dt_act_on_get_main_image();
@@ -1321,6 +1342,13 @@ gboolean try_enter(dt_view_t *self)
   if(!g_file_test(imgfilename, G_FILE_TEST_IS_REGULAR))
   {
     dt_control_log(_("image `%s' is currently unavailable"), img->filename);
+    gchar *why = g_strdup_printf(
+      _("the original file is unavailable:\n%s\n\n"
+        "reconnect the drive or memory card, then try again. "
+        "if you moved the photo, update its folder location in the library. "
+        "a cached thumbnail cannot be used for editing"), imgfilename);
+    _darkroom_cannot_open_dialog(why);
+    g_free(why);
     dt_image_cache_read_release(img);
     return TRUE;
   }
@@ -1356,6 +1384,10 @@ gboolean try_enter(dt_view_t *self)
       break;
     }
     dt_control_log(_("image `%s' could not be loaded\n%s"), img->filename, reason);
+    gchar *why = g_strdup_printf(_("this photo could not be opened:\n%s\n\n%s"),
+                                 imgfilename, reason);
+    _darkroom_cannot_open_dialog(why);
+    g_free(why);
     dt_image_cache_read_release(img);
     return TRUE;
   }
