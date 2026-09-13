@@ -1242,18 +1242,31 @@ static void _essentials_show_masks(dt_lib_module_t *self)
   GtkWidget *sources = gtk_expander_new(_("new mask"));
   gtk_expander_set_expanded(GTK_EXPANDER(sources), darktable.develop->forms == NULL);
   g_object_set_data(G_OBJECT(d->vbox_basic), "essentials-mask-sources", sources);
-  GtkWidget *add = gtk_grid_new();
-  gtk_grid_set_column_homogeneous(GTK_GRID(add), TRUE);
-  gtk_grid_set_column_spacing(GTK_GRID(add), DT_PIXEL_APPLY_DPI(4));
-  gtk_grid_set_row_spacing(GTK_GRID(add), DT_PIXEL_APPLY_DPI(4));
-  gtk_widget_set_name(add, "essentials-mask-sources");
+  GtkWidget *sources_box = dt_gui_vbox();
 #ifdef HAVE_AI
   const gboolean ai_ok = dt_masks_object_available();
 #else
   const gboolean ai_ok = FALSE;
 #endif
-  int position = 0;
-  for(const dt_essentials_mask_source_t *src = _essentials_mask_sources; src->label; src++, position++)
+  // two groups the source names alone do not distinguish: shapes drawn on the
+  // canvas, and AI selections that need no drawing. each grid gets a label
+  // saying what it asks of the user, but only when the AI group is present to
+  // contrast with (otherwise the single label just repeats the expander)
+  GtkWidget *drawn = gtk_grid_new();
+  gtk_grid_set_column_homogeneous(GTK_GRID(drawn), TRUE);
+  gtk_grid_set_column_spacing(GTK_GRID(drawn), DT_PIXEL_APPLY_DPI(4));
+  gtk_grid_set_row_spacing(GTK_GRID(drawn), DT_PIXEL_APPLY_DPI(4));
+  gtk_widget_set_name(drawn, "essentials-mask-sources");
+#ifdef HAVE_AI
+  GtkWidget *detect = gtk_grid_new();
+  gtk_grid_set_column_homogeneous(GTK_GRID(detect), TRUE);
+  gtk_grid_set_column_spacing(GTK_GRID(detect), DT_PIXEL_APPLY_DPI(4));
+  gtk_grid_set_row_spacing(GTK_GRID(detect), DT_PIXEL_APPLY_DPI(4));
+  gtk_widget_set_name(detect, "essentials-mask-sources");
+  int detect_pos = 0;
+#endif
+  int drawn_pos = 0;
+  for(const dt_essentials_mask_source_t *src = _essentials_mask_sources; src->label; src++)
   {
     GtkWidget *button = gtk_button_new_with_label(_(src->label));
     gtk_widget_set_sensitive(button, !src->ai || ai_ok);
@@ -1262,9 +1275,38 @@ static void _essentials_show_masks(dt_lib_module_t *self)
         : _("add a mask from this source"));
     g_object_set_data(G_OBJECT(button), "essentials-mask-source", (gpointer)src);
     g_signal_connect(button, "clicked", G_CALLBACK(_essentials_add_mask_clicked), self);
-    gtk_grid_attach(GTK_GRID(add), button, position % 3, position / 3, 1, 1);
+#ifdef HAVE_AI
+    if(src->ai)
+    {
+      gtk_grid_attach(GTK_GRID(detect), button, detect_pos % 3, detect_pos / 3, 1, 1);
+      detect_pos++;
+    }
+    else
+#endif
+    {
+      gtk_grid_attach(GTK_GRID(drawn), button, drawn_pos % 3, drawn_pos / 3, 1, 1);
+      drawn_pos++;
+    }
   }
-  gtk_container_add(GTK_CONTAINER(sources), add);
+#ifdef HAVE_AI
+  dt_gui_box_add(sources_box, dt_ui_section_label_new(_("draw a shape")));
+#endif
+  dt_gui_box_add(sources_box, drawn);
+#ifdef HAVE_AI
+  dt_gui_box_add(sources_box, dt_ui_section_label_new(_("detect automatically")));
+  dt_gui_box_add(sources_box, detect);
+  // a disabled button cannot show its tooltip: GTK3 sends no enter/leave to an
+  // insensitive widget, so the reason the AI sources are grayed has to be a
+  // visible line rather than a hover hint
+  if(!ai_ok)
+  {
+    GtkWidget *note = dt_ui_label_new(_("AI model is not available. Check preferences > AI"));
+    gtk_label_set_line_wrap(GTK_LABEL(note), TRUE);
+    gtk_widget_set_name(note, "essentials-mask-ai-note");
+    dt_gui_box_add(sources_box, note);
+  }
+#endif
+  gtk_container_add(GTK_CONTAINER(sources), sources_box);
   dt_gui_box_add(d->vbox_basic, sources);
   gtk_widget_show_all(d->vbox_basic);
 
