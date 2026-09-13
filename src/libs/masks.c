@@ -60,7 +60,7 @@ static const struct
   gboolean expanded;
 } _essentials_adjustments[] = {
   { "exposure", N_("exposure"), TRUE },
-  { "colorbalancergb", N_("color and grading"), TRUE },
+  { "colorbalancergb", N_("color grading"), TRUE },
   { "contrastntexture", N_("texture"), FALSE },
   { "sharpen", N_("sharpening"), FALSE },
   { "denoiseprofile", N_("noise reduction"), FALSE }
@@ -968,6 +968,10 @@ static void _essentials_init_adjustments(dt_lib_module_t *self)
   dt_lib_masks_t *d = self->data;
   d->essentials_overlay = gtk_check_button_new_with_label(_("show overlay"));
   g_signal_connect(d->essentials_overlay, "toggled", G_CALLBACK(_essentials_overlay_toggled), d);
+  // register the persistent adjustment controls as actions, alongside the
+  // sliders that already are, so they can be reached by shortcut like every
+  // other darktable control
+  dt_action_define(DT_ACTION(self), NULL, N_("show overlay"), d->essentials_overlay, &dt_action_def_toggle);
   d->essentials_hint = dt_ui_label_new(_("draw or select a mask to adjust that area"));
   gtk_label_set_line_wrap(GTK_LABEL(d->essentials_hint), TRUE);
   d->essentials_adjustments = dt_gui_vbox(d->essentials_overlay,
@@ -986,6 +990,9 @@ static void _essentials_init_adjustments(dt_lib_module_t *self)
     d->essentials_enabled[a] = enabled;
     g_object_set_data(G_OBJECT(enabled), "essentials-adjustment", GINT_TO_POINTER(a));
     g_signal_connect(enabled, "toggled", G_CALLBACK(_essentials_enabled_toggled), d);
+    // same section string the sliders pass, so it lands in this adjustment's node
+    dt_action_define(DT_ACTION(self), _(_essentials_adjustments[a].label), N_("on"),
+                     enabled, &dt_action_def_toggle);
     gtk_expander_set_label_widget(GTK_EXPANDER(section), dt_gui_hbox(dt_gui_expand(title), enabled));
     gtk_expander_set_label_fill(GTK_EXPANDER(section), TRUE);
     GtkWidget *box = dt_gui_vbox();
@@ -1029,6 +1036,8 @@ static void _essentials_init_adjustments(dt_lib_module_t *self)
     d->essentials_full[a] = full;
     g_object_set_data(G_OBJECT(full), "essentials-adjustment", GINT_TO_POINTER(a));
     g_signal_connect(full, "clicked", G_CALLBACK(_essentials_advanced_clicked), d);
+    dt_action_define(DT_ACTION(self), _(_essentials_adjustments[a].label), N_("all controls"),
+                     full, &dt_action_def_button);
     dt_gui_box_add(box, full);
     dt_gui_box_add(d->essentials_adjustments, section);
   }
